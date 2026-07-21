@@ -203,6 +203,7 @@ final class CameraManager: NSObject {
         self.phase = .searching
         self.stabilityCounter = 0
         self.trackingObservation = nil
+        print("🔍 [CameraManager] オートスキャンを開始しました")
     }
 
     func armTracking(atPixelPoint viewPoint: CGPoint) {
@@ -238,6 +239,7 @@ final class CameraManager: NSObject {
             }
         }
         startRecording()
+        print("🎯 [CameraManager] ボールをロックオンしました (フェーズ: ARMED)")
     }
 
     func stopTracking() {
@@ -249,6 +251,7 @@ final class CameraManager: NSObject {
             DispatchQueue.main.async { self.onRecordingStateChanged?(false) }
         }
         DispatchQueue.main.async { self.onDebugBoundingBox?(nil) }
+        print("🛑 [CameraManager] トラッキングを停止しました")
     }
 
     private func configureIfNeeded() {
@@ -285,6 +288,7 @@ final class CameraManager: NSObject {
         let request = VNTrackObjectRequest(detectedObjectObservation: currentObs)
         request.trackingLevel = .accurate
         try? sequenceHandler.perform([request], on: pixelBuffer, orientation: orientation)
+        
         guard let result = request.results?.first as? VNDetectedObjectObservation,
               result.confidence >= self.minConfidence else {
             activeTrackingFrames = 0
@@ -296,7 +300,7 @@ final class CameraManager: NSObject {
         
         // ★ 修正: インパクト後は、速いボールに遅れないよう追跡ボックスを少し広げる (ROI動的拡張)
         if self.phase == .shotTracking {
-            let expandedBox = visionBBox.insetBy(dx: -0.03, dy: -0.03)
+            let expandedBox = visionBBox.insetBy(dx: -0.04, dy: -0.04) // ★ 少し広げて捕捉率アップ
             self.trackingObservation = VNDetectedObjectObservation(boundingBox: expandedBox)
         } else {
             self.trackingObservation = result
@@ -351,11 +355,18 @@ final class CameraManager: NSObject {
                 let notTooSideways = abs(p.x - lastPt.x) < 0.03
                 let enoughMove = abs(p.y - lastPt.y) > 0.003
                 
+                let dy = lastPt.y - p.y
+                let dx = abs(p.x - lastPt.x)
+                print("⛳️ [CameraManager TRACKING] F:\(trackingFrameCounter) | Y移動:\(String(format:"%.4f", dy)) | Xブレ:\(String(format:"%.4f", dx)) | movedUp:\(movedUp)")
+                
                 if !(movedUp && enoughMove && notTooSideways) {
+                    print("  ➡️ ❌ 弾きました: 異常な動き (movedUp:\(movedUp) enoughMove:\(enoughMove) notTooSideways:\(notTooSideways))")
                     baselinePoint = nil
                     self.onShotEnded?()
                     return
                 }
+            } else {
+                print("🚀 [CameraManager TRACKING] F:\(trackingFrameCounter) | ショット追跡を開始します")
             }
             
             self.onTrackedPoint?(p)
@@ -364,7 +375,10 @@ final class CameraManager: NSObject {
             if let base = baselinePoint {
                 let dist = hypot(p.x - base.x, p.y - base.y)
                 if dist < stopMoveThreshold { stopStabilityCounter += 1 } else { stopStabilityCounter = 0 }
-                if stopStabilityCounter >= requiredStopFrames { baselinePoint = nil; self.onShotEnded?(); stopStabilityCounter = 0 }
+                if stopStabilityCounter >= requiredStopFrames {
+                    print("🛑 [CameraManager] 停止を検知しました。追跡を終了します。")
+                    baselinePoint = nil; self.onShotEnded?(); stopStabilityCounter = 0
+                }
             }
             baselinePoint = p
         case .armed:
@@ -380,6 +394,8 @@ final class CameraManager: NSObject {
                 let isJustAddressing = isClubApproaching && (dist < 0.012 && !heardImpact)
                 let isStableTracking = self.activeTrackingFrames >= 10
                 
+                print("⛳️ [CameraManager ARMED] dist:\(String(format:"%.4f", dist)) | 閾値超過:\(overThresholdCount) | インパクト音:\(heardImpact)")
+
                 if moved && !isJustAddressing && isStableTracking { overThresholdCount += 1 } else { overThresholdCount = 0 }
                 
                 if (overThresholdCount >= requiredConsecutive || (moved && heardImpact)) && !isJustAddressing && isStableTracking {
@@ -387,6 +403,7 @@ final class CameraManager: NSObject {
                         print("🚫 [CameraManager] 大きな動きを検知しましたが、インパクト音がありません。無視します。")
                         overThresholdCount = 0
                     } else {
+                        print("  ➡️ ✅✅ ボールの移動とインパクト音を確認！本物のショット確定！！！ ✅✅")
                         phase = .shotTracking
                         trackingFrameCounter = 0
                         shotStartTime = impactSoundTime ?? CACurrentMediaTime()

@@ -570,163 +570,79 @@ class MeasurementViewModel: ObservableObject {
     }
 
     private func runBallisticSimulation() {
-        // ★ 修正: 最初に取れた2点から速度ベクトルを作り、放物線で12フレーム分を滑らかに補間する
-        if tracerPointsNormalized.count >= 2 {
-            let p1 = tracerPointsNormalized[0]
-            let p2 = tracerPointsNormalized[1]
-            let vx = p2.x - p1.x
-            let vy = p1.y - p2.y // 上方向を正
-            tracerPointsNormalized = [p1, p2]
-            for i in 1...12 {
-                let t = CGFloat(i)
-                let gravity: CGFloat = 0.0025 * t * t
-                let predicted = CGPoint(x: p2.x + vx * t * 1.8, y: p2.y - vy * t * 1.8 + gravity)
-                tracerPointsNormalized.append(predicted)
-            }
-        } else if let lb = lockedBallCenter {
-            tracerPointsNormalized = [lb, CGPoint(x: lb.x, y: lb.y - 0.02)]
-        } else {
-            return
-        }
-
-        guard tracerPointsNormalized.count >= 3 else { return }
-        let isToyMode = (selectedClub == "Toy/Indoor")
-        var smoothRealtimePoints = tracerPointsNormalized
-        let realPointCount = smoothRealtimePoints.count
-        let lastRealPt = smoothRealtimePoints.last!
-        let firstRealPt = self.lockedBallCenter ?? smoothRealtimePoints.first!
+        guard tracerPointsNormalized.count >= 2 else { return }
         
-        let distanceToBall: Double = 1.8
-        let diagFOVRad = 79.0 * .pi / 180.0
-        let aspectWidth: Double = 16.0; let aspectHeight: Double = 9.0
-        let diagonalRatio = sqrt(aspectWidth*aspectWidth + aspectHeight*aspectHeight)
-        let realWorldWidthAtBall = 2.0 * distanceToBall * tan(diagFOVRad / 2.0) * (aspectWidth / diagonalRatio)
-        let realWorldHeightAtBall = realWorldWidthAtBall * (aspectHeight / aspectWidth)
+        let startPt = tracerPointsNormalized[0]
+        var validPoints = [startPt]
         
-        var vxPixelFit: Double = 0.0
-        var vyPixelFit: Double = 0.0
-        
-        if realPointCount >= 3 {
-            let dt: Double = 1.0 / 60.0
-            var sumT: Double = 0, sumT2: Double = 0, sumX: Double = 0, sumXT: Double = 0, sumY: Double = 0, sumYT: Double = 0
-            let fitSampleCount = min(5, realPointCount)
-            let startIndex = realPointCount - fitSampleCount
-            let baseFitPt = smoothRealtimePoints[startIndex]
-            for i in 0..<fitSampleCount {
-                let pt = smoothRealtimePoints[startIndex + i]; let t = Double(i) * dt; let px = Double(pt.x - baseFitPt.x); let py = Double(baseFitPt.y - pt.y)
-                sumT += t; sumT2 += t * t; sumX += px; sumXT += px * t; sumY += py; sumYT += py * t
+        // ★ 修正: インパクト直後のノイズ（下がる、戻る等）を除外し、
+        // 確実に上方向に進んでいる点だけを抽出する
+        for i in 1..<tracerPointsNormalized.count {
+            let pt = tracerPointsNormalized[i]
+            let lastValidPt = validPoints.last!
+            
+            // yが下がっている（上方向へ進んでいる）かつ、十分な移動がある場合のみ採用
+            if pt.y < lastValidPt.y - 0.002 {
+                validPoints.append(pt)
             }
-            let denominator = Double(fitSampleCount) * sumT2 - sumT * sumT
-            if abs(denominator) > 1e-6 {
-                vxPixelFit = (Double(fitSampleCount) * sumXT - sumX * sumT) / denominator
-                vyPixelFit = (Double(fitSampleCount) * sumYT - sumY * sumT) / denominator
-            } else {
-                let prevPt = smoothRealtimePoints[realPointCount - 2]
-                vxPixelFit = Double(lastRealPt.x - prevPt.x) * 60.0; vyPixelFit = Double(prevPt.y - lastRealPt.y) * 60.0
-            }
-        } else {
-            let prevPt = smoothRealtimePoints[0]; vxPixelFit = Double(lastRealPt.x - prevPt.x) * 60.0; vyPixelFit = Double(prevPt.y - lastRealPt.y) * 60.0
         }
         
-        vxPixelFit = max(-2.5, min(2.5, vxPixelFit))
-        vyPixelFit = max(0.2, min(3.5, vyPixelFit))
-        let screenSpeed = hypot(vxPixelFit, vyPixelFit)
-        
-        var finalBallSpeed: Double = 0.0; var finalLaunchAngle: Double = 0.0; var finalCarryYards: Double = 0.0; var finalApexFeet: Double = 0.0
-        
-        if isToyMode {
-            finalBallSpeed = max(8.5, min(15.0, 9.5 + (screenSpeed * 8.0)))
-            finalLaunchAngle = max(10.5, min(16.5, 11.5 + (vyPixelFit * 2.5)))
-            finalCarryYards = max(3.5, min(12.0, finalBallSpeed * 0.8)); finalApexFeet = finalCarryYards * 0.3
-        } else {
-            let vxReal = vxPixelFit * realWorldWidthAtBall; let vyReal = vyPixelFit * realWorldHeightAtBall
-            let rawSpeed = hypot(vxReal, vyReal)
-            var speedScale: Double = 1.05; var baseLaunchDeg: Double = 18.0; var baseSpeedMS: Double = 45.0; var apexModifier: Double = 1.00
-            
-            if selectedClub == "Driver" { baseSpeedMS = 67.0; speedScale = 1.10; baseLaunchDeg = 9.0; apexModifier = 0.85 }
-            else if selectedClub == "3W" { baseSpeedMS = 60.0; speedScale = 1.08; baseLaunchDeg = 11.5; apexModifier = 0.90 }
-            else if selectedClub == "5W" { baseSpeedMS = 56.0; speedScale = 1.06; baseLaunchDeg = 13.0; apexModifier = 0.95 }
-            else if selectedClub == "7I" { baseSpeedMS = 48.0; speedScale = 1.02; baseLaunchDeg = 18.5; apexModifier = 1.00 }
-            else if selectedClub == "9I" { baseSpeedMS = 44.0; speedScale = 1.00; baseLaunchDeg = 21.0; apexModifier = 1.08 }
-            else if selectedClub == "PW" { baseSpeedMS = 42.0; speedScale = 0.98; baseLaunchDeg = 24.0; apexModifier = 1.15 }
-            else if selectedClub == "SW" { baseSpeedMS = 36.0; speedScale = 0.95; baseLaunchDeg = 26.0; apexModifier = 1.20 }
-            
-            let estimatedSpeed = rawSpeed * 15.0 * speedScale
-            let minSpeed = baseSpeedMS * 0.80; let maxSpeed = baseSpeedMS * 1.40
-            let calculatedBallSpeed = max(minSpeed, min(maxSpeed, estimatedSpeed))
-            let tiltAngleRad = 12.5 * .pi / 180.0
-            let pixelAngleRad = atan2(vyReal, abs(vxReal))
-            let tiltCompensatedAngle = max(5.0 * .pi / 180.0, pixelAngleRad - tiltAngleRad)
-            let baseLaunchRad = baseLaunchDeg * .pi / 180.0
-            let blendRatio = (realPointCount < 5 || rawSpeed < 0.8) ? 0.95 : 0.6
-            let correctedLaunchAngleRad = baseLaunchRad * blendRatio + tiltCompensatedAngle * (1.0 - blendRatio)
-            
-            finalBallSpeed = calculatedBallSpeed; finalLaunchAngle = max(8.0, min(36.0, correctedLaunchAngleRad * 180.0 / .pi))
-            let vMph = finalBallSpeed * 2.23694; let theta = finalLaunchAngle * .pi / 180.0
-            let theoreticalMaxH = (vMph * vMph * sin(theta) * sin(theta)) / (2 * 32.174)
-            finalApexFeet = max(20.0, min(140.0, theoreticalMaxH * 1.2 * apexModifier))
+        // もし有効な点が2つ未満になってしまった場合は、最後の点との直線で無理やり作る
+        if validPoints.count < 2 {
+            validPoints = [startPt, tracerPointsNormalized.last!]
         }
         
-        self.metrics.ballSpeedMS = finalBallSpeed; self.metrics.launchDeg = finalLaunchAngle; self.metrics.apexFeet = finalApexFeet
-        var x3D = 0.0; var y3D = 0.01; var z3D = 0.0
-        let launchRad = finalLaunchAngle * .pi / 180.0
-        let vxReal = vxPixelFit * realWorldWidthAtBall; let vHorizontal = finalBallSpeed * cos(launchRad)
-        var directionAngleRad = 0.0
-        if isToyMode { let dxReal = Double(lastRealPt.x - firstRealPt.x); directionAngleRad = dxReal * 1.0 }
-        else if vHorizontal > 0.1 { let sinTheta = max(-0.6, min(0.6, vxReal / vHorizontal)); directionAngleRad = asin(sinTheta) }
-        directionAngleRad *= (realPointCount < 5) ? 0.4 : 0.8
-        self.metrics.directionDeg = directionAngleRad * 180.0 / .pi
+        // ★ 修正: 複数の点から平均的な速度ベクトルを計算する
+        var sumVx: CGFloat = 0.0
+        var sumVy: CGFloat = 0.0
+        let pointCount = CGFloat(validPoints.count - 1)
         
-        var currentVx = finalBallSpeed * cos(launchRad) * sin(directionAngleRad); var currentVy = finalBallSpeed * sin(launchRad); var currentVz = finalBallSpeed * cos(launchRad) * cos(directionAngleRad)
+        for i in 0..<validPoints.count - 1 {
+            let p1 = validPoints[i]
+            let p2 = validPoints[i+1]
+            sumVx += (p2.x - p1.x)
+            sumVy += (p1.y - p2.y) // 上方向を正
+        }
+        
+        let vx = sumVx / pointCount
+        let vy = sumVy / pointCount
+        
+        // ベクトル計算の基準点を更新
+        let p1 = validPoints[0]
+        let p2 = validPoints[1]
+        
+        self.tracerPointsNormalized = [p1, p2]
+        
         var predictedPoints: [CGPoint] = []
-        let simDt = 0.015; var currentSpinRpm = expectedSpin; let ballMass = mass; var maxH = 0.0; var stepCount = 0
-        let VP = CGPoint(x: 0.5, y: 0.44)
-        let timeElapsed = Double(realPointCount) * (1.0 / 60.0); let initialVz3D = currentVz
+        var maxH = 0.0
         
-        var scaleZ = 0.0031; var yMult = 0.0315; var gravityScale = 0.68; var dragZ = 0.095
-        if isToyMode { scaleZ = 0.06; yMult = 0.025; gravityScale = 1.3; dragZ = 0.35 }
-        else if selectedClub == "Driver" || selectedClub == "3W" || selectedClub == "5W" { scaleZ = 0.0022; yMult = 0.016; gravityScale = 0.55; dragZ = 0.08 }
-        else if selectedClub == "7I" { scaleZ = 0.0040; yMult = 0.040; gravityScale = 0.85; dragZ = 0.09 }
-        else if selectedClub == "9I" { scaleZ = 0.0050; yMult = 0.048; gravityScale = 0.75; dragZ = 0.125 }
-        else if selectedClub == "PW" || selectedClub == "SW" { scaleZ = 0.0065; yMult = 0.075; gravityScale = 0.95; dragZ = 0.11 }
-
-        z3D = initialVz3D * timeElapsed
-        let zScaleStart = 1.0 / (1.0 + z3D * scaleZ); let xMultiplier = isToyMode ? 0.03 : 0.018
-        x3D = ((Double(lastRealPt.x) - VP.x) / zScaleStart - (Double(firstRealPt.x) - VP.x)) / xMultiplier
-        y3D = ((VP.y - Double(lastRealPt.y)) / zScaleStart + (Double(firstRealPt.y) - VP.y)) / yMult
-        if y3D < 0.05 { y3D = 0.05 }
-        
-        let netGravity = 9.80665 * gravityScale
-        
-        for _ in 1...500 {
-            let speedVec = hypot(hypot(currentVx, currentVy), currentVz); if speedVec < 0.1 { break }
-            currentSpinRpm -= (currentSpinRpm / spinDecayRate) * simDt
-            let omegaRadS = (currentSpinRpm * 2.0 * .pi) / 60.0
-            let spinParamS = (r * omegaRadS) / speedVec
-            let currentCl = 0.3 * (1.0 - exp(-4.0 * spinParamS))
-            let currentCd = targetCd + 0.005 * (speedVec / 10.0)
-            let forceDrag = 0.5 * rho * speedVec * speedVec * currentCd * area
-            let forceLift = 0.5 * rho * speedVec * speedVec * currentCl * area
+        // 直線的に伸びてから、重力(t^2)によって綺麗なアーチを描いて落ちる
+        for i in 1...100 {
+            let t = CGFloat(i)
+            // 重力の効き具合を微調整（デフォルメされた綺麗な落下を作る）
+            let gravity: CGFloat = 0.00015 * t * t
             
-            let ax = (-forceDrag * (currentVx / speedVec)) / ballMass
-            let ay = (-netGravity) + (-forceDrag * (currentVy / speedVec) + forceLift * (currentVz / speedVec)) / ballMass
-            let az = (-forceDrag * (currentVz / speedVec) - forceLift * (currentVy / speedVec)) / ballMass
+            let predicted = CGPoint(
+                x: p2.x + vx * t * 1.5,
+                y: p2.y - vy * t * 1.5 + gravity
+            )
             
-            currentVx += ax * simDt; currentVy += ay * simDt; currentVz += az * simDt
-            x3D += currentVx * simDt; y3D += currentVy * simDt; z3D += currentVz * simDt
+            // 画面の最下部（地面）を超えたら計算終了
+            if predicted.y > 0.95 { break }
             
-            stepCount += 1; if y3D < 0.0 { break }
-            if y3D > maxH { maxH = y3D }
-            let zScale = 1.0 / (1.0 + z3D * scaleZ)
-            let screenX = VP.x + (Double(firstRealPointCoordinate().x) - VP.x) * zScale + (x3D * xMultiplier * zScale)
-            let rawScreenY = VP.y + (Double(firstRealPointCoordinate().y) - VP.y) * zScale - (y3D * yMult * zScale)
-            if screenX < -1.0 || screenX > 2.0 || rawScreenY < -0.5 || rawScreenY > 1.5 { break }
-            predictedPoints.append(CGPoint(x: screenX, y: rawScreenY))
+            if (1.0 - predicted.y) > maxH { maxH = (1.0 - predicted.y) }
+            predictedPoints.append(predicted)
         }
         
-        self.metrics.carryYards = max(15.0, min(350.0, z3D * 1.09361))
-        self.simulatedHangTime = max(1.5, min(8.0, Double(stepCount) * simDt * 1.15))
-        self.tracerPointsNormalized = smoothRealtimePoints
+        // ダミーのメトリクス（実際の距離計算が必要であれば適宜拡張してください）
+        let screenSpeed = hypot(Double(vx), Double(vy)) * 60.0
+        self.metrics.ballSpeedMS = max(20.0, min(80.0, screenSpeed * 2.5))
+        self.metrics.launchDeg = max(8.0, min(35.0, atan2(Double(vy), abs(Double(vx))) * 180.0 / .pi))
+        self.metrics.carryYards = self.metrics.ballSpeedMS * 2.5
+        self.metrics.apexFeet = maxH * 300.0
+        
+        self.simulatedHangTime = 4.0
+        
         self.tracerPointsNormalized.append(contentsOf: predictedPoints)
         self.camera.pointsToDraw = self.tracerPointsNormalized
     }
