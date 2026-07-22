@@ -288,7 +288,6 @@ final class CameraManager: NSObject {
         let request = VNTrackObjectRequest(detectedObjectObservation: currentObs)
         request.trackingLevel = .accurate
         try? sequenceHandler.perform([request], on: pixelBuffer, orientation: orientation)
-        
         guard let result = request.results?.first as? VNDetectedObjectObservation,
               result.confidence >= self.minConfidence else {
             activeTrackingFrames = 0
@@ -300,7 +299,7 @@ final class CameraManager: NSObject {
         
         // ★ 修正: インパクト後は、速いボールに遅れないよう追跡ボックスを少し広げる (ROI動的拡張)
         if self.phase == .shotTracking {
-            let expandedBox = visionBBox.insetBy(dx: -0.04, dy: -0.04) // ★ 少し広げて捕捉率アップ
+            let expandedBox = visionBBox.insetBy(dx: -0.03, dy: -0.03)
             self.trackingObservation = VNDetectedObjectObservation(boundingBox: expandedBox)
         } else {
             self.trackingObservation = result
@@ -355,18 +354,11 @@ final class CameraManager: NSObject {
                 let notTooSideways = abs(p.x - lastPt.x) < 0.03
                 let enoughMove = abs(p.y - lastPt.y) > 0.003
                 
-                let dy = lastPt.y - p.y
-                let dx = abs(p.x - lastPt.x)
-                print("⛳️ [CameraManager TRACKING] F:\(trackingFrameCounter) | Y移動:\(String(format:"%.4f", dy)) | Xブレ:\(String(format:"%.4f", dx)) | movedUp:\(movedUp)")
-                
                 if !(movedUp && enoughMove && notTooSideways) {
-                    print("  ➡️ ❌ 弾きました: 異常な動き (movedUp:\(movedUp) enoughMove:\(enoughMove) notTooSideways:\(notTooSideways))")
                     baselinePoint = nil
                     self.onShotEnded?()
                     return
                 }
-            } else {
-                print("🚀 [CameraManager TRACKING] F:\(trackingFrameCounter) | ショット追跡を開始します")
             }
             
             self.onTrackedPoint?(p)
@@ -375,10 +367,7 @@ final class CameraManager: NSObject {
             if let base = baselinePoint {
                 let dist = hypot(p.x - base.x, p.y - base.y)
                 if dist < stopMoveThreshold { stopStabilityCounter += 1 } else { stopStabilityCounter = 0 }
-                if stopStabilityCounter >= requiredStopFrames {
-                    print("🛑 [CameraManager] 停止を検知しました。追跡を終了します。")
-                    baselinePoint = nil; self.onShotEnded?(); stopStabilityCounter = 0
-                }
+                if stopStabilityCounter >= requiredStopFrames { baselinePoint = nil; self.onShotEnded?(); stopStabilityCounter = 0 }
             }
             baselinePoint = p
         case .armed:
