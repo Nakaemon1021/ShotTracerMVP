@@ -570,62 +570,50 @@ class MeasurementViewModel: ObservableObject {
     }
 
     private func runBallisticSimulation() {
-        // ★ 修正: ノイズの多い最初の数点を捨て、確実に上方向へ離れた「安定した複数点」を抽出してベクトルを計算する
-        guard let startPt = lockedBallCenter ?? tracerPointsNormalized.first else { return }
-        
-        var validPoints: [CGPoint] = [startPt]
+        // ★ 修正: インパクト直後のノイズを無視し、軌跡の中で最も高い点(頂点付近)から初速ベクトルを逆算する
+        guard tracerPointsNormalized.count >= 3, let startPt = lockedBallCenter ?? tracerPointsNormalized.first else {
+            // 点が少なすぎる場合のフォールバック
+            if let lb = lockedBallCenter { tracerPointsNormalized = [lb, CGPoint(x: lb.x, y: lb.y - 0.02)] }
+            return
+        }
+
+        // 1. 追跡できた点の中から、最も高い(画面上ではYが小さい)点を探す
+        var highestPt = startPt
         for pt in tracerPointsNormalized {
-            // ボールの初期位置から上に 0.005 (0.5%) 以上離れている点のみを採用
-            if pt.y < startPt.y - 0.005 {
-                validPoints.append(pt)
+            if pt.y < highestPt.y {
+                highestPt = pt
             }
         }
         
-        // ベクトル計算
-        var vx: CGFloat = 0.0
-        var vy: CGFloat = 0.0
+        // 2. 頂点までのX(横)とY(高さ)の移動量を計算
+        let dx = highestPt.x - startPt.x
+        let dy = startPt.y - highestPt.y
         
-        if validPoints.count >= 3 {
-            // 安定した最初の2点（startPtの次はvalidPoints[1], その次はvalidPoints[2]）を使用
-            let p1 = validPoints[1]
-            let p2 = validPoints[2]
-            
-            vx = p2.x - p1.x
-            vy = p1.y - p2.y // 上方向を正
-            
-            self.tracerPointsNormalized = [startPt, p1]
-            
-        } else if validPoints.count == 2 {
-            // 有効な点が2つしかない場合
-            let p1 = validPoints[0]
-            let p2 = validPoints[1]
-            vx = p2.x - p1.x
-            vy = p1.y - p2.y
-            
-            self.tracerPointsNormalized = [p1]
-        } else if let lb = lockedBallCenter {
-            // 有効な点が無い場合のフォールバック
-            self.tracerPointsNormalized = [lb]
-            vx = 0.0
-            vy = 0.015 // デフォルトの上昇
-        }
+        // 異常値（クラブの誤検知など）の弾き
+        if dy < 0.01 { return } // ほとんど上に上がっていない
         
-        // ★ 修正: ベクトルが異常な値（極端に真横や真下）にならないように補正
-        if vy < 0.001 { vy = 0.005 } // 最低限の上昇を確保
-        vx = max(-0.02, min(0.02, vx)) // 極端な横ブレを制限（より真っ直ぐ飛ばす）
+        // 3. 物理法則(重力)を考慮して、この頂点に到達するための初速ベクトル(vx, vy)を逆算する
+        //   y = vy * t - 0.5 * g * t^2 において、頂点では vy = g * t となることを利用
+        let estimatedT = sqrt(dy / 0.00125) // 重力係数(0.0025の半分)から頂点到達時間を逆算
+        var vy = 0.0025 * estimatedT        // 必要な上方向の初速
+        var vx = dx / estimatedT            // 必要な横方向の初速
         
-        // 予測ポイントの生成（真っ直ぐ伸びてから、重力でアーチを描く）
-        var predictedPoints: [CGPoint] = []
+        // ベクトルの補正（極端な横ブレや、低すぎる/高すぎる打ち出しの制限）
+        vy = max(0.005, min(0.035, vy))
+        vx = max(-0.015, min(0.015, vx))
+        
+        // 4. 計算したベクトルを使って、真っ直ぐ伸びてから重力で落ちる理想の軌道（予測点）を生成
+        var predictedPoints: [CGPoint] = [startPt]
         var maxH = 0.0
         
         for i in 1...100 {
             let t = CGFloat(i)
-            // 重力の効き具合を微調整（デフォルメされた綺麗な落下を作る）
+            // 重力の効き具合（t^2）
             let gravity: CGFloat = 0.00015 * t * t
             
             let predicted = CGPoint(
-                x: (self.tracerPointsNormalized.last?.x ?? startPt.x) + vx * t * 1.5,
-                y: (self.tracerPointsNormalized.last?.y ?? startPt.y) - vy * t * 1.5 + gravity
+                x: startPt.x + vx * t,
+                y: startPt.y - vy * t + gravity
             )
             
             // 画面の最下部（地面）を超えたら計算終了
@@ -635,17 +623,17 @@ class MeasurementViewModel: ObservableObject {
             predictedPoints.append(predicted)
         }
         
-        // メトリクスの計算 (予測されたベクトルから計算)
+        // 5. メトリクスの計算（画面上のピクセル速度から実際の速度へ変換）
         let screenSpeed = hypot(Double(vx), Double(vy)) * 60.0
-        self.metrics.ballSpeedMS = max(20.0, min(80.0, screenSpeed * 2.5))
+        self.metrics.ballSpeedMS = max(20.0, min(80.0, screenSpeed * 3.5))
         self.metrics.launchDeg = max(8.0, min(35.0, atan2(Double(vy), abs(Double(vx))) * 180.0 / .pi))
         
-        // CARRY と APEX は簡単な比例で計算 (必要に応じて調整)
-        self.metrics.carryYards = self.metrics.ballSpeedMS * 3.5
-        self.metrics.apexFeet = maxH * 300.0 // 画面上の最高点から計算
+        // CARRY と APEX は速度と角度から算出
+        self.metrics.carryYards = self.metrics.ballSpeedMS * 3.2
+        self.metrics.apexFeet = maxH * 280.0
         self.simulatedHangTime = 4.0
         
-        self.tracerPointsNormalized.append(contentsOf: predictedPoints)
+        self.tracerPointsNormalized = predictedPoints
         self.camera.pointsToDraw = self.tracerPointsNormalized
     }
     
