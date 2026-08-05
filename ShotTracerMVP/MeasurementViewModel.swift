@@ -56,6 +56,38 @@ class MeasurementViewModel: ObservableObject {
         var ballSpeedMS: Double = 0
         var apexFeet: Double = 0
     }
+    
+    private struct ClubTrajectoryProfile {
+        // インパクト直後の直線区間
+        let laserDuration: CGFloat
+
+        // 直線区間の上方向への伸び
+        let laserVerticalScale: CGFloat
+
+        // 頂点へ移行するまでの時間
+        let climbDuration: CGFloat
+
+        // 頂点までの追加上昇量に掛ける倍率
+        let additionalRiseScale: CGFloat
+
+        // 頂点までの最低上昇量
+        let minimumAdditionalRise: CGFloat
+
+        // 頂点までの最大上昇量
+        let maximumAdditionalRise: CGFloat
+
+        // 頂点後の落下加速度
+        let fallGravity: CGFloat
+
+        // 横方向の伸び
+        let horizontalScale: CGFloat
+
+        // 頂点へ向かう横方向の減速率
+        let climbHorizontalRate: CGFloat
+
+        // 頂点後の横方向の減速率
+        let fallHorizontalRate: CGFloat
+    }
 
     let camera = CameraManager()
     private var currentVideoURL: URL?
@@ -96,19 +128,160 @@ class MeasurementViewModel: ObservableObject {
             targetCd = 0.24; expectedSpin = 7500.0
         }
     }
+    
+    private func trajectoryProfile(
+        for club: String
+    ) -> ClubTrajectoryProfile {
+        switch club {
+        case "Driver":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.22,
+                laserVerticalScale: 0.78,
+                climbDuration: 0.62,
+                additionalRiseScale: 0.10,
+                minimumAdditionalRise: 0.07,
+                maximumAdditionalRise: 0.22,
+                fallGravity: 0.42,
+                horizontalScale: 1.00,
+                climbHorizontalRate: 0.80,
+                fallHorizontalRate: 0.75
+            )
 
+        case "3W":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.20,
+                laserVerticalScale: 0.82,
+                climbDuration: 0.64,
+                additionalRiseScale: 0.11,
+                minimumAdditionalRise: 0.08,
+                maximumAdditionalRise: 0.23,
+                fallGravity: 0.44,
+                horizontalScale: 0.95,
+                climbHorizontalRate: 0.76,
+                fallHorizontalRate: 0.70
+            )
+
+        case "5W":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.18,
+                laserVerticalScale: 0.86,
+                climbDuration: 0.67,
+                additionalRiseScale: 0.12,
+                minimumAdditionalRise: 0.09,
+                maximumAdditionalRise: 0.24,
+                fallGravity: 0.46,
+                horizontalScale: 0.90,
+                climbHorizontalRate: 0.72,
+                fallHorizontalRate: 0.66
+            )
+
+        case "7I":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.16,
+                laserVerticalScale: 0.94,
+                climbDuration: 0.68,
+                additionalRiseScale: 0.14,
+                minimumAdditionalRise: 0.11,
+                maximumAdditionalRise: 0.27,
+                fallGravity: 0.50,
+                horizontalScale: 0.82,
+                climbHorizontalRate: 0.66,
+                fallHorizontalRate: 0.58
+            )
+
+        case "9I":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.14,
+                laserVerticalScale: 1.00,
+                climbDuration: 0.70,
+                additionalRiseScale: 0.16,
+                minimumAdditionalRise: 0.13,
+                maximumAdditionalRise: 0.29,
+                fallGravity: 0.54,
+                horizontalScale: 0.74,
+                climbHorizontalRate: 0.60,
+                fallHorizontalRate: 0.52
+            )
+
+        case "PW":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.12,
+                laserVerticalScale: 1.08,
+                climbDuration: 0.72,
+                additionalRiseScale: 0.18,
+                minimumAdditionalRise: 0.15,
+                maximumAdditionalRise: 0.31,
+                fallGravity: 0.58,
+                horizontalScale: 0.66,
+                climbHorizontalRate: 0.54,
+                fallHorizontalRate: 0.46
+            )
+
+        case "SW":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.10,
+                laserVerticalScale: 1.15,
+                climbDuration: 0.74,
+                additionalRiseScale: 0.20,
+                minimumAdditionalRise: 0.17,
+                maximumAdditionalRise: 0.33,
+                fallGravity: 0.62,
+                horizontalScale: 0.58,
+                climbHorizontalRate: 0.48,
+                fallHorizontalRate: 0.40
+            )
+
+        case "Toy/Indoor":
+            return ClubTrajectoryProfile(
+                laserDuration: 0.10,
+                laserVerticalScale: 0.90,
+                climbDuration: 0.45,
+                additionalRiseScale: 0.10,
+                minimumAdditionalRise: 0.06,
+                maximumAdditionalRise: 0.18,
+                fallGravity: 0.65,
+                horizontalScale: 0.55,
+                climbHorizontalRate: 0.50,
+                fallHorizontalRate: 0.42
+            )
+
+        default:
+            return ClubTrajectoryProfile(
+                laserDuration: 0.16,
+                laserVerticalScale: 0.90,
+                climbDuration: 0.60,
+                additionalRiseScale: 0.12,
+                minimumAdditionalRise: 0.08,
+                maximumAdditionalRise: 0.24,
+                fallGravity: 0.50,
+                horizontalScale: 0.85,
+                climbHorizontalRate: 0.65,
+                fallHorizontalRate: 0.60
+            )
+        }
+    }
+    
     func resetTracer() {
         tracerPointsNormalized.removeAll()
         camera.pointsToDraw.removeAll()
+
         metrics = ShotMetrics()
         phase = .idle
-        hintText = isVideoMode ? "動画内のボールをタップしてください" : "ボールをタップ、またはAuto Modeを開始"
+
+        hintText = isVideoMode
+            ? "動画内のボールをタップしてください"
+            : "ボールをタップ、またはAuto Modeを開始"
+
         aimPointNormalized = nil
         debugBoundingBoxNormalized = nil
         lockedBallCenter = nil
         videoShotTime = 0.0
+
         camera.stopTracking()
-        if !isVideoMode { videoThumbnail = nil }
+
+        if !isVideoMode {
+            videoThumbnail = nil
+        }
     }
 
     func armTracking(atPixelPoint point: CGPoint) {
@@ -117,8 +290,14 @@ class MeasurementViewModel: ObservableObject {
                 guard let self = self, let normPoint = self.aimPointNormalized else { return }
                 self.lockedBallCenter = normPoint
                 let boxWidth: CGFloat = 0.05
-                let boxHeight: CGFloat = boxWidth * (16.0 / 9.0)
-                self.debugBoundingBoxNormalized = CGRect(x: normPoint.x - boxWidth/2, y: normPoint.y - boxHeight/2, width: boxWidth, height: boxHeight)
+                let boxHeight: CGFloat = 0.05
+
+                self.debugBoundingBoxNormalized = CGRect(
+                    x: normPoint.x - boxWidth / 2,
+                    y: normPoint.y - boxHeight / 2,
+                    width: boxWidth,
+                    height: boxHeight
+                )
                 self.phase = .armed
                 self.hintText = "動画を解析中..."
                 if let url = self.currentVideoURL { self.runVideoAnalysisLoop(at: url) }
@@ -223,9 +402,18 @@ class MeasurementViewModel: ObservableObject {
     // =====================================================================
     private func runVideoAnalysisLoop(at url: URL) {
         let initialPoint = self.aimPointNormalized ?? CGPoint(x: 0.5, y: 0.72)
-        let boxWidth: CGFloat = 0.04
-        let boxHeight: CGFloat = boxWidth * (16.0 / 9.0)
-        let visionBBox = CGRect(x: initialPoint.x - boxWidth/2, y: (1.0 - initialPoint.y) - boxHeight/2, width: boxWidth, height: boxHeight)
+        let boxWidth: CGFloat = 0.05
+        let boxHeight: CGFloat = 0.05
+        let rawVisionBBox = CGRect(
+            x: initialPoint.x - boxWidth / 2,
+            y: (1.0 - initialPoint.y) - boxHeight / 2,
+            width: boxWidth,
+            height: boxHeight
+        )
+        
+        let visionBBox = rawVisionBBox.intersection(
+            CGRect(x: 0, y: 0, width: 1, height: 1)
+        )
         
         var currentObservation: VNDetectedObjectObservation? = VNDetectedObjectObservation(boundingBox: visionBBox)
         var sequenceHandler = VNSequenceRequestHandler()
@@ -234,6 +422,19 @@ class MeasurementViewModel: ObservableObject {
         var debugFrameCount = 0
         var firstTimestamp: Double? = nil
         
+        // インパクト後の実測追跡用
+        var invalidTrackingFrames = 0
+        
+        // ショット検知後に採用できた有効点の数
+        var postImpactValidPointCount = 0
+        var shouldFinishPostImpactTracking = false
+        
+        let maxInvalidTrackingFrames = 3
+        let maxPostImpactTrackingFrames = 6
+        
+        // 予測へ移行するために必要な有効点数
+        let requiredPostImpactValidPoints = 3
+        
         var lastCenter = initialPoint
         var recentPoints: [CGPoint] = []
         
@@ -241,6 +442,16 @@ class MeasurementViewModel: ObservableObject {
         var initialBallColor: (r: Float, g: Float, b: Float)? = nil
         var previousTrackerColor: (r: Float, g: Float, b: Float)? = nil
         var recentOriginColorDiffs: [Float] = []
+        
+        // 原点の色変化が連続したフレーム数
+        var consecutiveOriginChangedFrames = 0
+        
+        // 上方向へ連続移動したフレーム数
+        var consecutiveUpwardMoveFrames = 0
+        
+        // Rescueを許可する最低条件
+        let requiredOriginChangedFrames = 2
+        let requiredUpwardMoveFrames = 2
         
         Task {
             let asset = AVURLAsset(url: url)
@@ -318,9 +529,22 @@ class MeasurementViewModel: ObservableObject {
                                 let dyUpwardFromLast = lastCenter.y - center.y
                                 let dxFromStart = center.x - startPt.x
                                 
+                                // 原点の色が変化し続けているか
+                                if originColorDiff >= 0.010 {
+                                    consecutiveOriginChangedFrames += 1
+                                } else {
+                                    consecutiveOriginChangedFrames = 0
+                                }
+                                
+                                // Vision上の対象が連続して上へ移動しているか
+                                if dyUpwardFromLast >= 0.003 {
+                                    consecutiveUpwardMoveFrames += 1
+                                } else {
+                                    consecutiveUpwardMoveFrames = 0
+                                }
+                                
                                 recentOriginColorDiffs.append(originColorDiff)
                                 if recentOriginColorDiffs.count > 5 { recentOriginColorDiffs.removeFirst() }
-                                let maxOriginColorDiff = recentOriginColorDiffs.max() ?? 0.0
                                 
                                 let isAnomalyMove = dyFromStart < -0.015 || abs(center.x - startPt.x) > 0.15 || dyFromLast > 0.02
                                 let isColorChanged = trackerColorDiff > 0.08
@@ -332,133 +556,43 @@ class MeasurementViewModel: ObservableObject {
                                     let distFromStartAtLast = hypot(lastCenter.x - startPt.x, startPt.y - lastCenter.y)
                                     let isSuspiciousStationary = (distFromStartAtLast > 0.005) && (stationaryFramesAtLastCenter >= 5)
                                     
-                                    if dyFromStartAtLast >= 0.005 && abs(lastCenter.x - startPt.x) < 0.08 {
-                                        if maxOriginColorDiff >= 0.008 && !isSuspiciousStationary {
-                                            self.phase = .shotTracking
-                                            self.hintText = "ショット検知！弾道をシミュレーション中..."
-                                            self.tracerPointsNormalized.removeAll()
-                                            self.tracerPointsNormalized.append(startPt)
-                                            let filterRate = self.selectedClub == "Toy/Indoor" ? 0.2 : 0.3
-                                            var lastRawPt = startPt
-                                            for pt in recentPoints {
-                                                let dy = lastRawPt.y - pt.y
-                                                let dx = abs(pt.x - lastRawPt.x)
-                                                if dy > 0.002 && pt.y >= lastCenter.y && dx < dy * 5.0 {
-                                                    self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (pt.x - startPt.x) * filterRate, y: pt.y))
-                                                    lastRawPt = pt
-                                                }
-                                            }
-                                            let finalDy = lastRawPt.y - lastCenter.y
-                                            let finalDx = abs(lastCenter.x - lastRawPt.x)
-                                            if finalDy > 0.002 && finalDx < finalDy * 5.0 { self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (lastCenter.x - startPt.x) * filterRate, y: lastCenter.y)) }
-                                            self.videoShotTime = relativeTime - 0.05
-                                            observationResult = nil
-                                            shouldResetTracker = false
-                                        } else { shouldResetTracker = true }
-                                    } else { shouldResetTracker = true }
-                                } else {
-                                    recentPoints.append(center)
-                                    if recentPoints.count > 15 { recentPoints.removeFirst() }
+                                    let hasEnoughUpwardDisplacement =
+                                    dyFromStartAtLast >= 0.010
                                     
-                                    if dyFromStart > 0.024 {
-                                        let isCurrentlyMovingUp = dyUpwardFromLast > 0.005
-                                        let isVerticalDominant = abs(dxFromStart) < dyFromStart * 2.5
-                                        var framesSinceMoved = 0
-                                        for pt in recentPoints.reversed() { if (startPt.y - pt.y) > 0.01 { framesSinceMoved += 1 } else { break } }
-                                        
-                                        let isBallMissing = maxOriginColorDiff >= 0.010
-                                        let isFastMove = framesSinceMoved > 0 && framesSinceMoved <= 2
-                                        
-                                        if isBallMissing && isFastMove && isCurrentlyMovingUp && isVerticalDominant {
-                                            self.phase = .shotTracking
-                                            self.hintText = "ショット検知！弾道をシミュレーション中..."
-                                            self.tracerPointsNormalized.removeAll()
-                                            self.tracerPointsNormalized.append(startPt)
-                                            let filterRate = self.selectedClub == "Toy/Indoor" ? 0.2 : 0.3
-                                            var lastRawPt = startPt
-                                            for pt in recentPoints {
-                                                let dy = lastRawPt.y - pt.y
-                                                let dx = abs(pt.x - lastRawPt.x)
-                                                if dy > 0.002 && pt.y >= center.y && dx < dy * 5.0 {
-                                                    self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (pt.x - startPt.x) * filterRate, y: pt.y))
-                                                    lastRawPt = pt
-                                                }
-                                            }
-                                            let finalDy = lastRawPt.y - center.y
-                                            let finalDx = abs(center.x - lastRawPt.x)
-                                            if finalDy > 0.002 && finalDx < finalDy * 5.0 { self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (center.x - startPt.x) * filterRate, y: center.y)) }
-                                            self.videoShotTime = relativeTime - (Double(framesSinceMoved) / 60.0)
-                                        } else { shouldResetTracker = true }
-                                    }
-                                }
-                            } else if self.phase == .shotTracking {
-                                trackingFrameCount += 1
-                                var filteredCenter = center
-                                if let startPt = self.lockedBallCenter {
-                                    let dx = center.x - startPt.x
-                                    let filterRate = self.selectedClub == "Toy/Indoor" ? 0.2 : 0.3
-                                    filteredCenter = CGPoint(x: startPt.x + dx * filterRate, y: center.y)
-                                }
-                                
-                                // ★ 修正: インパクト直後は信頼度が下がるので閾値を 0.25 に緩和
-                                if result.confidence < 0.25 || trackerColorDiff > 0.08 {
-                                    observationResult = nil
-                                } else if let lastPt = self.tracerPointsNormalized.last {
-                                    // ★ 修正: 「上方向に進まない点」「横ブレ」は採用せず予測へ移行
-                                    let movedUp = filteredCenter.y < lastPt.y
-                                    let notTooSideways = abs(filteredCenter.x - lastPt.x) < 0.03
-                                    let enoughMove = abs(lastPt.y - filteredCenter.y) > 0.003
+                                    let horizontalMovementIsReasonable =
+                                    abs(lastCenter.x - startPt.x) < 0.06
                                     
-                                    if movedUp && enoughMove && notTooSideways {
-                                        self.tracerPointsNormalized.append(filteredCenter)
-                                    } else {
-                                        observationResult = nil
+                                    let originChangedContinuously =
+                                    consecutiveOriginChangedFrames >=
+                                    requiredOriginChangedFrames
+                                    
+                                    let movedUpContinuously =
+                                    consecutiveUpwardMoveFrames >=
+                                    requiredUpwardMoveFrames
+                                    
+                                    let hasUsableUpwardPoint =
+                                    recentPoints.contains { point in
+                                        let upwardDistance =
+                                        startPt.y - point.y
+                                        
+                                        let horizontalDistance =
+                                        abs(point.x - startPt.x)
+                                        
+                                        return upwardDistance >= 0.008 &&
+                                        horizontalDistance <
+                                            max(
+                                                upwardDistance * 3.0,
+                                                0.03
+                                            )
                                     }
-                                } else {
-                                    self.tracerPointsNormalized.append(filteredCenter)
-                                }
-                                
-                                if trackingFrameCount >= 4 { observationResult = nil }
-                            }
-                        }
-                        
-                        if shouldResetTracker {
-                            currentObservation = VNDetectedObjectObservation(boundingBox: visionBBox)
-                            lastCenter = initialPoint
-                            recentPoints.removeAll()
-                            sequenceHandler = VNSequenceRequestHandler()
-                            previousTrackerColor = nil
-                            recentOriginColorDiffs.removeAll()
-                        } else {
-                            if self.phase == .shotTracking && trackingFrameCount >= 4 {
-                                currentObservation = nil
-                            } else if self.phase == .shotTracking && observationResult != nil {
-                                // ★ 修正: 動画モードでも、速いボールに遅れないよう追跡ボックスを広げる
-                                let expandedBox = observationResult!.boundingBox.insetBy(dx: -0.03, dy: -0.03)
-                                currentObservation = VNDetectedObjectObservation(boundingBox: expandedBox)
-                            } else {
-                                currentObservation = result
-                            }
-                            lastCenter = center
-                        }
-                        
-                    } else {
-                        var isSavedByRescue = false
-                        await MainActor.run {
-                            if self.phase == .armed {
-                                let startPt = self.lockedBallCenter ?? initialPoint
-                                let dyFromStart = startPt.y - lastCenter.y
-                                recentOriginColorDiffs.append(originColorDiff)
-                                if recentOriginColorDiffs.count > 5 { recentOriginColorDiffs.removeFirst() }
-                                let updatedMaxDiff = recentOriginColorDiffs.max() ?? 0.0
-                                var stationaryFramesAtLastCenter = 0
-                                for pt in recentPoints.reversed() { if hypot(pt.x - lastCenter.x, pt.y - lastCenter.y) < 0.005 { stationaryFramesAtLastCenter += 1 } else { break } }
-                                let distFromStart = hypot(lastCenter.x - startPt.x, startPt.y - lastCenter.y)
-                                let isSuspiciousStationary = (distFromStart > 0.005) && (stationaryFramesAtLastCenter >= 5)
-                                
-                                if dyFromStart >= -0.008 && abs(lastCenter.x - startPt.x) < 0.08 {
-                                    if updatedMaxDiff >= 0.008 && !isSuspiciousStationary {
-                                        isSavedByRescue = true
+                                    
+                                    if hasEnoughUpwardDisplacement &&
+                                        horizontalMovementIsReasonable &&
+                                        originChangedContinuously &&
+                                        movedUpContinuously &&
+                                        hasUsableUpwardPoint &&
+                                        !isSuspiciousStationary {
+                                        
                                         self.phase = .shotTracking
                                         self.hintText = "ショット検知！弾道をシミュレーション中..."
                                         self.tracerPointsNormalized.removeAll()
@@ -477,30 +611,509 @@ class MeasurementViewModel: ObservableObject {
                                         let finalDx = abs(lastCenter.x - lastRawPt.x)
                                         if finalDy > 0.002 && finalDx < finalDy * 5.0 { self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (lastCenter.x - startPt.x) * filterRate, y: lastCenter.y)) }
                                         self.videoShotTime = relativeTime - 0.05
+                                        
+                                        trackingFrameCount = 0
+                                        invalidTrackingFrames = 0
+                                        postImpactValidPointCount = 0
+                                        shouldFinishPostImpactTracking = false
+                                        
+                                        shouldResetTracker = false
+                                    } else {
+                                        // 明確に不正な方向へ移動した場合だけ追跡をリセットする
+                                        let clearlyInvalidMovement =
+                                        dyFromStart < -0.015 ||
+                                        abs(dxFromStart) > 0.15
+                                        
+                                        shouldResetTracker =
+                                        clearlyInvalidMovement
                                     }
+                                } else {
+                                    recentPoints.append(center)
+                                    if recentPoints.count > 15 { recentPoints.removeFirst() }
+                                    
+                                    if dyFromStart > 0.024 {
+                                        let isCurrentlyMovingUp = dyUpwardFromLast > 0.005
+                                        let isVerticalDominant = abs(dxFromStart) < dyFromStart * 2.5
+                                        var framesSinceMoved = 0
+                                        for pt in recentPoints.reversed() { if (startPt.y - pt.y) > 0.01 { framesSinceMoved += 1 } else { break } }
+                                        
+                                        let isBallMissing =
+                                        consecutiveOriginChangedFrames >=
+                                        requiredOriginChangedFrames
+                                        
+                                        let isFastMove =
+                                        framesSinceMoved > 0 &&
+                                        framesSinceMoved <= 2
+                                        
+                                        let hasEnoughUpwardDisplacement =
+                                        dyFromStart >= 0.024
+                                        
+                                        let hasConsecutiveUpwardMovement =
+                                        consecutiveUpwardMoveFrames >=
+                                        requiredUpwardMoveFrames
+                                        
+                                        if isBallMissing &&
+                                            isFastMove &&
+                                            hasEnoughUpwardDisplacement &&
+                                            hasConsecutiveUpwardMovement &&
+                                            isCurrentlyMovingUp &&
+                                            isVerticalDominant {
+                                            
+                                            self.phase = .shotTracking
+                                            
+                                            self.hintText = "ショット検知！弾道をシミュレーション中..."
+                                            self.tracerPointsNormalized.removeAll()
+                                            self.tracerPointsNormalized.append(startPt)
+                                            let filterRate = self.selectedClub == "Toy/Indoor" ? 0.2 : 0.3
+                                            var lastRawPt = startPt
+                                            for pt in recentPoints {
+                                                let dy = lastRawPt.y - pt.y
+                                                let dx = abs(pt.x - lastRawPt.x)
+                                                if dy > 0.002 && pt.y >= center.y && dx < dy * 5.0 {
+                                                    self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (pt.x - startPt.x) * filterRate, y: pt.y))
+                                                    lastRawPt = pt
+                                                }
+                                            }
+                                            let finalDy = lastRawPt.y - center.y
+                                            let finalDx = abs(center.x - lastRawPt.x)
+                                            if finalDy > 0.002 && finalDx < finalDy * 5.0 { self.tracerPointsNormalized.append(CGPoint(x: startPt.x + (center.x - startPt.x) * filterRate, y: center.y)) }
+                                            self.videoShotTime =
+                                            relativeTime -
+                                            (Double(framesSinceMoved) / 60.0)
+                                            
+                                            trackingFrameCount = 0
+                                            invalidTrackingFrames = 0
+                                            postImpactValidPointCount = 0
+                                            shouldFinishPostImpactTracking = false
+                                            
+                                            shouldResetTracker = false
+                                            
+                                        } else {
+                                            let clearlyInvalidMovement =
+                                            dyFromStart < -0.015 ||
+                                            abs(dxFromStart) > 0.15
+                                            
+                                            shouldResetTracker =
+                                            clearlyInvalidMovement
+                                        }
+                                    }
+                                }
+                            } else if self.phase == .shotTracking {
+                                trackingFrameCount += 1
+                                
+                                var filteredCenter = center
+                                
+                                if let startPt = self.lockedBallCenter {
+                                    let dxFromStart = center.x - startPt.x
+                                    let filterRate: CGFloat =
+                                    self.selectedClub == "Toy/Indoor" ? 0.2 : 0.3
+                                    
+                                    filteredCenter = CGPoint(
+                                        x: startPt.x + dxFromStart * filterRate,
+                                        y: center.y
+                                    )
+                                }
+                                
+                                var isValidTrackingPoint = true
+                                
+                                // 高速移動中は一時的に信頼度が低下するため、
+                                // 1回の低下では追跡を終了しない
+                                if result.confidence < 0.20 {
+                                    isValidTrackingPoint = false
+                                }
+                                
+                                // 高速ボールはブラーで色が変わるため、
+                                // armed時より緩い条件にする
+                                if trackerColorDiff > 0.16 {
+                                    isValidTrackingPoint = false
+                                }
+                                
+                                if let lastPt = self.tracerPointsNormalized.last {
+                                    let deltaX = filteredCenter.x - lastPt.x
+                                    let deltaY = filteredCenter.y - lastPt.y
+                                    
+                                    let horizontalMove = abs(deltaX)
+                                    let verticalMove = abs(deltaY)
+                                    let totalMove = hypot(deltaX, deltaY)
+                                    
+                                    let directionIsAcceptable: Bool
+                                    
+                                    if trackingFrameCount <= 3 {
+                                        // 左上原点なので、上方向はdeltaYがマイナス。
+                                        // 0.002未満の小さな下方向ノイズまでは許容する。
+                                        directionIsAcceptable = deltaY < 0.002
+                                    } else {
+                                        directionIsAcceptable = true
+                                    }
+                                    
+                                    let moveIsLargeEnough =
+                                    totalMove > 0.0015
+                                    
+                                    let moveIsNotExcessive =
+                                    totalMove < 0.10
+                                    
+                                    let horizontalMoveIsReasonable =
+                                    horizontalMove < 0.05 ||
+                                    horizontalMove < max(
+                                        verticalMove * 6.0,
+                                        0.015
+                                    )
+                                    
+                                    if !directionIsAcceptable ||
+                                        !moveIsLargeEnough ||
+                                        !moveIsNotExcessive ||
+                                        !horizontalMoveIsReasonable {
+                                        
+                                        isValidTrackingPoint = false
+                                    }
+                                }
+                                
+                                var didAppendPostImpactPoint = false
+                                
+                                if isValidTrackingPoint {
+                                    if let lastPt = self.tracerPointsNormalized.last {
+                                        let distance = hypot(
+                                            filteredCenter.x - lastPt.x,
+                                            filteredCenter.y - lastPt.y
+                                        )
+                                        
+                                        if distance > 0.0015 {
+                                            self.tracerPointsNormalized.append(
+                                                filteredCenter
+                                            )
+                                            
+                                            postImpactValidPointCount += 1
+                                            didAppendPostImpactPoint = true
+                                            
+                                            print(
+                                                "✅ インパクト後の有効点 " +
+                                                "\(postImpactValidPointCount)/" +
+                                                "\(requiredPostImpactValidPoints) " +
+                                                "distance:\(distance)"
+                                            )
+                                        }
+                                        
+                                    } else {
+                                        self.tracerPointsNormalized.append(
+                                            filteredCenter
+                                        )
+                                        
+                                        postImpactValidPointCount += 1
+                                        didAppendPostImpactPoint = true
+                                        
+                                        print(
+                                            "✅ インパクト後の最初の有効点 " +
+                                            "\(postImpactValidPointCount)/" +
+                                            "\(requiredPostImpactValidPoints)"
+                                        )
+                                    }
+                                }
+                                
+                                if didAppendPostImpactPoint {
+                                    invalidTrackingFrames = 0
+                                    
+                                } else {
+                                    invalidTrackingFrames += 1
+                                    
+                                    print(
+                                        "⚠️ インパクト後の無効点 " +
+                                        "\(invalidTrackingFrames)/" +
+                                        "\(maxInvalidTrackingFrames) " +
+                                        "confidence:\(result.confidence) " +
+                                        "colorDiff:\(trackerColorDiff)"
+                                    )
+                                }
+                                
+                                let hasEnoughMeasuredPoints =
+                                postImpactValidPointCount >=
+                                requiredPostImpactValidPoints
+                                
+                                let reachedFrameLimit =
+                                trackingFrameCount >=
+                                maxPostImpactTrackingFrames
+                                
+                                let reachedInvalidLimit =
+                                invalidTrackingFrames >=
+                                maxInvalidTrackingFrames
+                                
+                                if reachedFrameLimit ||
+                                    reachedInvalidLimit ||
+                                    hasEnoughMeasuredPoints {
+                                    
+                                    print(
+                                        "🏁 実測追跡を終了 " +
+                                        "frames:\(trackingFrameCount) " +
+                                        "validPoints:\(postImpactValidPointCount) " +
+                                        "invalid:\(invalidTrackingFrames)"
+                                    )
+                                    
+                                    shouldFinishPostImpactTracking = true
+                                }
+                            }
+                        }
+                        
+                        if shouldResetTracker {
+                            currentObservation = VNDetectedObjectObservation(boundingBox: visionBBox)
+                            lastCenter = initialPoint
+                            recentPoints.removeAll()
+                            sequenceHandler = VNSequenceRequestHandler()
+                            previousTrackerColor = nil
+                            recentOriginColorDiffs.removeAll()
+                            
+                            consecutiveOriginChangedFrames = 0
+                            consecutiveUpwardMoveFrames = 0
+                            
+                        } else {
+                            if self.phase == .shotTracking &&
+                                shouldFinishPostImpactTracking {
+                                
+                                currentObservation = nil
+                                
+                            } else if self.phase == .shotTracking,
+                                      let shotObservation = observationResult {
+                                
+                                let originalBox = shotObservation.boundingBox
+                                
+                                let maximumWidth: CGFloat = 0.14
+                                let maximumHeight: CGFloat = 0.14
+                                
+                                let expandedWidth = min(
+                                    originalBox.width + 0.04,
+                                    maximumWidth
+                                )
+                                
+                                let expandedHeight = min(
+                                    originalBox.height + 0.04,
+                                    maximumHeight
+                                )
+                                
+                                var expandedBox = CGRect(
+                                    x: originalBox.midX - expandedWidth / 2,
+                                    y: originalBox.midY - expandedHeight / 2,
+                                    width: expandedWidth,
+                                    height: expandedHeight
+                                )
+                                
+                                expandedBox = expandedBox.intersection(
+                                    CGRect(x: 0, y: 0, width: 1, height: 1)
+                                )
+                                
+                                if expandedBox.width > 0 &&
+                                    expandedBox.height > 0 {
+                                    
+                                    currentObservation =
+                                    VNDetectedObjectObservation(
+                                        boundingBox: expandedBox
+                                    )
+                                    
+                                } else {
+                                    currentObservation = nil
+                                }
+                                
+                            } else if self.phase == .armed {
+                                currentObservation = result
+                                
+                            } else {
+                                currentObservation = nil
+                            }
+                            lastCenter = center
+                        }
+                        
+                    } else {
+                        var isSavedByRescue = false
+                        await MainActor.run {
+                            if self.phase == .armed {
+                                let startPt =
+                                self.lockedBallCenter ?? initialPoint
+                                
+                                let dyFromStart =
+                                startPt.y - lastCenter.y
+                                
+                                recentOriginColorDiffs.append(originColorDiff)
+                                
+                                if recentOriginColorDiffs.count > 5 {
+                                    recentOriginColorDiffs.removeFirst()
+                                }
+                                
+                                // Visionが対象を見失ったRescueフレームでも、
+                                // 原点の色変化を連続回数へ反映する
+                                if originColorDiff >= 0.010 {
+                                    consecutiveOriginChangedFrames += 1
+                                } else {
+                                    consecutiveOriginChangedFrames = 0
+                                }
+                                
+                                var stationaryFramesAtLastCenter = 0
+                                
+                                for pt in recentPoints.reversed() { if hypot(pt.x - lastCenter.x, pt.y - lastCenter.y) < 0.005 { stationaryFramesAtLastCenter += 1 } else { break } }
+                                let distFromStart = hypot(lastCenter.x - startPt.x, startPt.y - lastCenter.y)
+                                let isSuspiciousStationary = (distFromStart > 0.005) && (stationaryFramesAtLastCenter >= 5)
+                                
+                                let hasClearlyMovedUp =
+                                dyFromStart >= 0.008
+                                
+                                let horizontalMoveIsSmall =
+                                abs(lastCenter.x - startPt.x) < 0.06
+                                
+                                let originChangedContinuously =
+                                consecutiveOriginChangedFrames >=
+                                requiredOriginChangedFrames
+                                
+                                let movedUpContinuously =
+                                consecutiveUpwardMoveFrames >=
+                                requiredUpwardMoveFrames
+                                
+                                let hasUsableFlightPoint =
+                                recentPoints.contains { point in
+                                    let upwardDistance =
+                                    startPt.y - point.y
+                                    
+                                    let horizontalDistance =
+                                    abs(point.x - startPt.x)
+                                    
+                                    return upwardDistance >= 0.008 &&
+                                    horizontalDistance <
+                                        max(upwardDistance * 3.0, 0.03)
+                                }
+                                
+                                if hasClearlyMovedUp &&
+                                    horizontalMoveIsSmall &&
+                                    originChangedContinuously &&
+                                    movedUpContinuously &&
+                                    hasUsableFlightPoint &&
+                                    !isSuspiciousStationary {
+                                    
+                                    isSavedByRescue = true
+                                    
+                                    self.phase = .shotTracking
+                                    self.hintText =
+                                    "ショット検知！弾道をシミュレーション中..."
+                                    
+                                    self.tracerPointsNormalized.removeAll()
+                                    self.tracerPointsNormalized.append(startPt)
+                                    
+                                    let filterRate: CGFloat =
+                                    self.selectedClub == "Toy/Indoor"
+                                    ? 0.2
+                                    : 0.3
+                                    
+                                    var lastRawPt = startPt
+                                    
+                                    for point in recentPoints {
+                                        let dy =
+                                        lastRawPt.y - point.y
+                                        
+                                        let dx =
+                                        abs(point.x - lastRawPt.x)
+                                        
+                                        if dy > 0.002 &&
+                                            point.y >= lastCenter.y &&
+                                            dx < dy * 5.0 {
+                                            
+                                            self.tracerPointsNormalized.append(
+                                                CGPoint(
+                                                    x: startPt.x +
+                                                    (point.x - startPt.x) *
+                                                    filterRate,
+                                                    y: point.y
+                                                )
+                                            )
+                                            
+                                            lastRawPt = point
+                                        }
+                                    }
+                                    
+                                    let finalDy =
+                                    lastRawPt.y - lastCenter.y
+                                    
+                                    let finalDx =
+                                    abs(lastCenter.x - lastRawPt.x)
+                                    
+                                    if finalDy > 0.002 &&
+                                        finalDx < finalDy * 5.0 {
+                                        
+                                        self.tracerPointsNormalized.append(
+                                            CGPoint(
+                                                x: startPt.x +
+                                                (lastCenter.x - startPt.x) *
+                                                filterRate,
+                                                y: lastCenter.y
+                                            )
+                                        )
+                                    }
+                                    
+                                    self.videoShotTime =
+                                    relativeTime - 0.05
                                 }
                             }
                         }
                         if isSavedByRescue {
+                            trackingFrameCount = 0
+                            invalidTrackingFrames = 0
+                            postImpactValidPointCount = 0
+                            
+                            // Visionが対象を見失った状態なので、
+                            // 初期位置から追跡を再開せず予測へ移行する
+                            shouldFinishPostImpactTracking = true
                             currentObservation = nil
+                            
                         } else {
-                            let phaseNow2 = await MainActor.run { self.phase }
+                            let phaseNow2 = await MainActor.run {
+                                self.phase
+                            }
+                            
                             if phaseNow2 == .armed {
-                                await MainActor.run {
-                                    currentObservation = VNDetectedObjectObservation(boundingBox: visionBBox)
-                                    lastCenter = initialPoint
-                                    recentPoints.removeAll()
-                                    sequenceHandler = VNSequenceRequestHandler()
-                                    previousTrackerColor = nil
-                                    recentOriginColorDiffs.removeAll()
+                                currentObservation =
+                                VNDetectedObjectObservation(
+                                    boundingBox: visionBBox
+                                )
+                                
+                                lastCenter = initialPoint
+                                recentPoints.removeAll()
+                                sequenceHandler =
+                                VNSequenceRequestHandler()
+                                
+                                previousTrackerColor = nil
+                                recentOriginColorDiffs.removeAll()
+                                
+                                consecutiveOriginChangedFrames = 0
+                                consecutiveUpwardMoveFrames = 0
+                            } else if phaseNow2 == .shotTracking {
+                                invalidTrackingFrames += 1
+                                
+                                print(
+                                    "⚠️ ショット後にVision結果なし " +
+                                    "\(invalidTrackingFrames)/\(maxInvalidTrackingFrames)"
+                                )
+                                
+                                if invalidTrackingFrames >= maxInvalidTrackingFrames {
+                                    shouldFinishPostImpactTracking = true
+                                    currentObservation = nil
+                                    
+                                } else if currentObservation == nil {
+                                    currentObservation = VNDetectedObjectObservation(
+                                        boundingBox: visionBBox
+                                    )
                                 }
+                                
                             } else {
                                 currentObservation = nil
                             }
                         }
                     }
-                    if currentObservation == nil && phaseNow == .shotTracking { break }
-                    try? await Task.sleep(nanoseconds: 5_000_000)
+                    let phaseAfterProcessing = await MainActor.run {
+                        self.phase
+                    }
+                    
+                    if currentObservation == nil &&
+                        phaseAfterProcessing == .shotTracking {
+                        
+                        break
+                    }
+                    
+                    try? await Task.sleep(
+                        nanoseconds: 5_000_000
+                    )
                 }
                 
                 await MainActor.run {
@@ -569,73 +1182,322 @@ class MeasurementViewModel: ObservableObject {
         }
     }
 
-    private func runBallisticSimulation() {
-        // ★ 修正: インパクト直後のノイズを無視し、軌跡の中で最も高い点(頂点付近)から初速ベクトルを逆算する
-        guard tracerPointsNormalized.count >= 3, let startPt = lockedBallCenter ?? tracerPointsNormalized.first else {
-            // 点が少なすぎる場合のフォールバック
-            if let lb = lockedBallCenter { tracerPointsNormalized = [lb, CGPoint(x: lb.x, y: lb.y - 0.02)] }
-            return
-        }
+            private func runBallisticSimulation() {
+                guard let startPt =
+                        lockedBallCenter ??
+                        tracerPointsNormalized.first else {
+                    return
+                }
 
-        // 1. 追跡できた点の中から、最も高い(画面上ではYが小さい)点を探す
-        var highestPt = startPt
-        for pt in tracerPointsNormalized {
-            if pt.y < highestPt.y {
-                highestPt = pt
+                let rawPoints = tracerPointsNormalized
+
+                // startPt以外に最低1点あれば予測できるようにする
+                guard rawPoints.count >= 2 else {
+                    tracerPointsNormalized = [
+                        startPt,
+                        CGPoint(
+                            x: startPt.x,
+                            y: startPt.y - 0.02
+                        )
+                    ]
+
+                    metrics.ballSpeedMS = 0
+                    metrics.launchDeg = 0
+                    metrics.carryYards = 0
+                    metrics.apexFeet = 0
+                    return
+                }
+
+                // 有効な実測点だけを抽出する
+                var measuredPoints: [CGPoint] = []
+
+                for point in rawPoints {
+                    let clampedPoint = CGPoint(
+                        x: min(max(point.x, 0.0), 1.0),
+                        y: min(max(point.y, 0.0), 1.0)
+                    )
+
+                    if let last = measuredPoints.last {
+                        let distance = hypot(
+                            clampedPoint.x - last.x,
+                            clampedPoint.y - last.y
+                        )
+
+                        if distance >= 0.0015 &&
+                            distance <= 0.12 {
+
+                            measuredPoints.append(clampedPoint)
+                        }
+                    } else {
+                        measuredPoints.append(clampedPoint)
+                    }
+                }
+
+                guard measuredPoints.count >= 2 else {
+                    return
+                }
+
+                // 実測点の先頭と末尾から平均速度ベクトルを求める。
+                // 実測点は原則60fpsとして扱う。
+                let firstMeasuredPoint = measuredPoints.first!
+                let lastMeasuredPoint = measuredPoints.last!
+
+                let measuredIntervals =
+                    max(1, measuredPoints.count - 1)
+
+                let measuredTime =
+                    CGFloat(measuredIntervals) / 60.0
+
+                var velocityX =
+                    (lastMeasuredPoint.x - firstMeasuredPoint.x) /
+                    measuredTime
+
+                var velocityY =
+                    (firstMeasuredPoint.y - lastMeasuredPoint.y) /
+                    measuredTime
+
+                // 異常なVisionジャンプを抑制する
+                velocityX = max(
+                    -1.2,
+                    min(1.2, velocityX)
+                )
+
+                velocityY = max(
+                    0.10,
+                    min(2.2, velocityY)
+                )
+
+                let screenSpeed = hypot(
+                    Double(velocityX),
+                    Double(velocityY)
+                )
+
+                let launchAngleRadians = atan2(
+                    Double(velocityY),
+                    max(abs(Double(velocityX)), 0.01)
+                )
+
+                let launchAngleDegrees =
+                    launchAngleRadians * 180.0 / .pi
+
+                metrics.ballSpeedMS = max(
+                    20.0,
+                    min(80.0, 20.0 + screenSpeed * 25.0)
+                )
+
+                metrics.launchDeg = max(
+                    8.0,
+                    min(35.0, launchAngleDegrees)
+                )
+
+                // 表示用の予測トレーサー
+                var predictedPoints = measuredPoints
+
+                // 選択中のクラブに対応する弾道設定
+                let profile = trajectoryProfile(
+                    for: selectedClub
+                )
+
+                let predictionStep: CGFloat = 1.0 / 60.0
+
+                let laserDuration =
+                    profile.laserDuration
+
+                let climbDuration =
+                    profile.climbDuration
+
+                var maximumRise: CGFloat = 0
+                var predictionTime: CGFloat = 0
+
+                // --------------------------------------------------
+                // レーザー区間の終了位置
+                // --------------------------------------------------
+
+                let laserEndX =
+                    lastMeasuredPoint.x +
+                    velocityX *
+                    laserDuration *
+                    profile.horizontalScale
+
+                let laserEndY =
+                    lastMeasuredPoint.y -
+                    velocityY *
+                    laserDuration *
+                    profile.laserVerticalScale
+
+                // --------------------------------------------------
+                // クラブ別の頂点位置
+                // --------------------------------------------------
+
+                let additionalRise = min(
+                    profile.maximumAdditionalRise,
+                    max(
+                        profile.minimumAdditionalRise,
+                        velocityY *
+                        profile.additionalRiseScale
+                    )
+                )
+
+                let apexY =
+                    laserEndY -
+                    additionalRise
+
+                let apexX =
+                    laserEndX +
+                    velocityX *
+                    climbDuration *
+                    profile.horizontalScale *
+                    profile.climbHorizontalRate
+
+                // --------------------------------------------------
+                // 3段階の予測軌道
+                // --------------------------------------------------
+
+                for _ in 1...240 {
+                    predictionTime += predictionStep
+
+                    let predictedPoint: CGPoint
+
+                    if predictionTime <= laserDuration {
+                        // ==========================================
+                        // 1. インパクト直後のレーザー区間
+                        // ==========================================
+
+                        let progress =
+                            predictionTime / laserDuration
+
+                        predictedPoint = CGPoint(
+                            x: lastMeasuredPoint.x +
+                                (laserEndX - lastMeasuredPoint.x) *
+                                progress,
+
+                            y: lastMeasuredPoint.y +
+                                (laserEndY - lastMeasuredPoint.y) *
+                                progress
+                        )
+
+                    } else if predictionTime <=
+                                laserDuration + climbDuration {
+
+                        // ==========================================
+                        // 2. レーザー終了点から頂点への移行
+                        // ==========================================
+
+                        let climbTime =
+                            predictionTime -
+                            laserDuration
+
+                        let progress = min(
+                            1.0,
+                            climbTime / climbDuration
+                        )
+
+                        // 頂点に近づくほど上昇速度を弱める
+                        let easedProgress =
+                            1.0 -
+                            pow(
+                                1.0 - progress,
+                                2.4
+                            )
+
+                        predictedPoint = CGPoint(
+                            x: laserEndX +
+                                (apexX - laserEndX) *
+                                progress,
+
+                            y: laserEndY +
+                                (apexY - laserEndY) *
+                                easedProgress
+                        )
+
+                    } else {
+                        // ==========================================
+                        // 3. 頂点からの落下区間
+                        // ==========================================
+
+                        let fallTime =
+                            predictionTime -
+                            laserDuration -
+                            climbDuration
+
+                        let horizontalFallSpeed =
+                            velocityX *
+                            profile.horizontalScale *
+                            profile.fallHorizontalRate
+
+                        predictedPoint = CGPoint(
+                            x: apexX +
+                                horizontalFallSpeed *
+                                fallTime,
+
+                            y: apexY +
+                                profile.fallGravity *
+                                fallTime *
+                                fallTime
+                        )
+                    }
+
+                    // 左右へ大きく画面外に出た場合
+                    if predictedPoint.x < -0.10 ||
+                        predictedPoint.x > 1.10 {
+
+                        break
+                    }
+
+                    // 上方向へ大きく画面外に出た場合
+                    if predictedPoint.y < -0.15 {
+                        break
+                    }
+
+                    // 頂点を過ぎて地面付近へ戻った場合
+                    if predictedPoint.y >=
+                        min(
+                            0.95,
+                            startPt.y + 0.03
+                        ) &&
+                        predictionTime >
+                        laserDuration + climbDuration {
+
+                        break
+                    }
+
+                    predictedPoints.append(
+                        predictedPoint
+                    )
+
+                    maximumRise = max(
+                        maximumRise,
+                        startPt.y - predictedPoint.y
+                    )
+                }
+
+
+                metrics.carryYards = max(
+                    5.0,
+                    min(
+                        320.0,
+                        metrics.ballSpeedMS *
+                        cos(launchAngleRadians) *
+                        4.2
+                    )
+                )
+
+                metrics.apexFeet = max(
+                    1.0,
+                    min(
+                        180.0,
+                        Double(maximumRise) * 280.0
+                    )
+                )
+
+                simulatedHangTime = min(
+                    6.0,
+                    max(1.0, Double(predictionTime))
+                )
+
+                tracerPointsNormalized = predictedPoints
+                camera.pointsToDraw = predictedPoints
             }
-        }
-        
-        // 2. 頂点までのX(横)とY(高さ)の移動量を計算
-        let dx = highestPt.x - startPt.x
-        let dy = startPt.y - highestPt.y
-        
-        // 異常値（クラブの誤検知など）の弾き
-        if dy < 0.01 { return } // ほとんど上に上がっていない
-        
-        // 3. 物理法則(重力)を考慮して、この頂点に到達するための初速ベクトル(vx, vy)を逆算する
-        //   y = vy * t - 0.5 * g * t^2 において、頂点では vy = g * t となることを利用
-        let estimatedT = sqrt(dy / 0.00125) // 重力係数(0.0025の半分)から頂点到達時間を逆算
-        var vy = 0.0025 * estimatedT        // 必要な上方向の初速
-        var vx = dx / estimatedT            // 必要な横方向の初速
-        
-        // ベクトルの補正（極端な横ブレや、低すぎる/高すぎる打ち出しの制限）
-        vy = max(0.005, min(0.035, vy))
-        vx = max(-0.015, min(0.015, vx))
-        
-        // 4. 計算したベクトルを使って、真っ直ぐ伸びてから重力で落ちる理想の軌道（予測点）を生成
-        var predictedPoints: [CGPoint] = [startPt]
-        var maxH = 0.0
-        
-        for i in 1...100 {
-            let t = CGFloat(i)
-            // 重力の効き具合（t^2）
-            let gravity: CGFloat = 0.00015 * t * t
-            
-            let predicted = CGPoint(
-                x: startPt.x + vx * t,
-                y: startPt.y - vy * t + gravity
-            )
-            
-            // 画面の最下部（地面）を超えたら計算終了
-            if predicted.y > 0.95 { break }
-            
-            if (1.0 - predicted.y) > maxH { maxH = (1.0 - predicted.y) }
-            predictedPoints.append(predicted)
-        }
-        
-        // 5. メトリクスの計算（画面上のピクセル速度から実際の速度へ変換）
-        let screenSpeed = hypot(Double(vx), Double(vy)) * 60.0
-        self.metrics.ballSpeedMS = max(20.0, min(80.0, screenSpeed * 3.5))
-        self.metrics.launchDeg = max(8.0, min(35.0, atan2(Double(vy), abs(Double(vx))) * 180.0 / .pi))
-        
-        // CARRY と APEX は速度と角度から算出
-        self.metrics.carryYards = self.metrics.ballSpeedMS * 3.2
-        self.metrics.apexFeet = maxH * 280.0
-        self.simulatedHangTime = 4.0
-        
-        self.tracerPointsNormalized = predictedPoints
-        self.camera.pointsToDraw = self.tracerPointsNormalized
-    }
     
     private func firstRealPointCoordinate() -> CGPoint { return self.lockedBallCenter ?? self.aimPointNormalized ?? CGPoint(x: 0.5, y: 0.72) }
 }

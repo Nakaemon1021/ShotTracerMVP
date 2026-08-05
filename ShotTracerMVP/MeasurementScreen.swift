@@ -26,9 +26,16 @@ struct MeasurementScreen: View {
                 
                 // 動画モードの時は、サムネイル画像をカメラ映像の「上」に重ねて表示する
                 if let thumbnail = vm.videoThumbnail {
-                    Image(uiImage: thumbnail)
-                        .resizable()
-                        .scaledToFill() // コンテナが16:9に固定されているのでピッタリ収まります
+                    GeometryReader { geo in
+                        Image(uiImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(
+                                width: geo.size.width,
+                                height: geo.size.height
+                            )
+                            .clipped()
+                    }
                 }
                 
                 // 2. タップ領域レイヤー
@@ -38,15 +45,19 @@ struct MeasurementScreen: View {
                         .onTapGesture(coordinateSpace: .local) { location in
                             if vm.phase == .armed || vm.phase == .shotTracking {
                                 vm.forceEndAndSave()
+
                             } else if vm.isTapEnabled {
-                                vm.armTracking(atPixelPoint: location)
-                                
-                                // 動画モード時、タップ位置を正規化して保存
-                                if vm.videoThumbnail != nil {
-                                    let normX = location.x / geo.size.width
-                                    let normY = location.y / geo.size.height
-                                    vm.aimPointNormalized = CGPoint(x: normX, y: normY)
+
+                                // 動画モードでは、armTrackingより先に正規化座標を設定する
+                                if let thumbnail = vm.videoThumbnail {
+                                    vm.aimPointNormalized = normalizedPointForAspectFillTap(
+                                        location: location,
+                                        containerSize: geo.size,
+                                        imageSize: thumbnail.size
+                                    )
                                 }
+
+                                vm.armTracking(atPixelPoint: location)
                             }
                         }
                 }
@@ -62,17 +73,24 @@ struct MeasurementScreen: View {
                     
                     // ★ 修正: リセット時に青枠が消えるように、phaseが .armed の時だけ表示するように厳格化
                     if vm.phase == .armed {
-                        if vm.videoThumbnail != nil {
-                            // 動画モードの手動ロック枠
+                        if let thumbnail = vm.videoThumbnail {
                             if let aim = vm.aimPointNormalized {
+                                let displayPoint =
+                                    displayPointForAspectFillNormalizedPoint(
+                                        normalizedPoint: aim,
+                                        containerSize: geo.size,
+                                        imageSize: thumbnail.size
+                                    )
+
                                 FocusCircleView(
-                                    position: CGPoint(x: aim.x * screenW, y: aim.y * screenH),
+                                    position: displayPoint,
                                     size: 0.045 * screenW
                                 )
                             }
                         } else {
-                            // リアルタイムモードの手動ロック枠
-                            DebugBoundingBoxOverlay(boxNormalized: vm.debugBoundingBoxNormalized)
+                            DebugBoundingBoxOverlay(
+                                boxNormalized: vm.debugBoundingBoxNormalized
+                            )
                         }
                     }
                     
@@ -284,6 +302,55 @@ struct MeasurementScreen: View {
         )
     }
     
+    private func normalizedPointForAspectFillTap(
+        location: CGPoint,
+        containerSize: CGSize,
+        imageSize: CGSize
+    ) -> CGPoint {
+        guard containerSize.width > 0,
+              containerSize.height > 0,
+              imageSize.width > 0,
+              imageSize.height > 0 else {
+            return CGPoint(x: 0.5, y: 0.5)
+        }
+
+        let scale = max(
+            containerSize.width / imageSize.width,
+            containerSize.height / imageSize.height
+        )
+
+        let displayedWidth = imageSize.width * scale
+        let displayedHeight = imageSize.height * scale
+
+        let cropX = max(
+            0,
+            (displayedWidth - containerSize.width) / 2.0
+        )
+
+        let cropY = max(
+            0,
+            (displayedHeight - containerSize.height) / 2.0
+        )
+
+        let imageX = (location.x + cropX) / scale
+        let imageY = (location.y + cropY) / scale
+
+        let normalizedX = min(
+            max(imageX / imageSize.width, 0.0),
+            1.0
+        )
+
+        let normalizedY = min(
+            max(imageY / imageSize.height, 0.0),
+            1.0
+        )
+
+        return CGPoint(
+            x: normalizedX,
+            y: normalizedY
+        )
+    }
+    
     @ViewBuilder
     private func zoomButton(_ title: String, scale: CGFloat) -> some View {
         Button(action: { vm.setZoom(scale: scale) }) {
@@ -297,6 +364,46 @@ struct MeasurementScreen: View {
                 .clipShape(Capsule())
         }
     }
+    
+    private func displayPointForAspectFillNormalizedPoint(
+        normalizedPoint: CGPoint,
+        containerSize: CGSize,
+        imageSize: CGSize
+    ) -> CGPoint {
+        guard containerSize.width > 0,
+              containerSize.height > 0,
+              imageSize.width > 0,
+              imageSize.height > 0 else {
+            return CGPoint(
+                x: containerSize.width / 2,
+                y: containerSize.height / 2
+            )
+        }
+
+        let scale = max(
+            containerSize.width / imageSize.width,
+            containerSize.height / imageSize.height
+        )
+
+        let displayedWidth = imageSize.width * scale
+        let displayedHeight = imageSize.height * scale
+
+        let cropX = max(
+            0,
+            (displayedWidth - containerSize.width) / 2
+        )
+
+        let cropY = max(
+            0,
+            (displayedHeight - containerSize.height) / 2
+        )
+
+        return CGPoint(
+            x: normalizedPoint.x * displayedWidth - cropX,
+            y: normalizedPoint.y * displayedHeight - cropY
+        )
+    }
+    
 }
 
 // ★ 追加：キュッとフォーカスされるアニメーションを持つロックオン枠
@@ -436,13 +543,14 @@ struct DebugBoundingBoxOverlay: View {
 
 struct BottomControlBar: View {
     @ObservedObject var vm: MeasurementViewModel
-    
+
     var body: some View {
         HStack {
             HStack(spacing: 6) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
+
                 Text(vm.phase.rawValue)
                     .bold()
                     .font(.system(size: 10))
@@ -451,17 +559,19 @@ struct BottomControlBar: View {
             .padding(.vertical, 5)
             .background(Color.white.opacity(0.15))
             .clipShape(Capsule())
-            
+
             Spacer()
-            
-            Button(action: { vm.startAutoMode() }) {
+
+            Button(action: {
+                vm.startAutoMode()
+            }) {
                 Label("Auto Mode", systemImage: "bolt.fill")
                     .font(.footnote)
                     .bold()
             }
             .buttonStyle(.borderedProminent)
             .tint(.orange)
-            
+
             Button("Reset") {
                 vm.resetTracer()
             }
@@ -473,14 +583,20 @@ struct BottomControlBar: View {
         .padding(.vertical, 10)
         .background(.ultraThinMaterial)
     }
-    
+
     private var statusColor: Color {
         switch vm.phase {
-        case .idle: return .gray
-        case .searching: return .blue
-        case .armed: return .green
-        case .shotTracking: return .red
-        default: return .gray
+        case .idle:
+            return .gray
+
+        case .searching:
+            return .blue
+
+        case .armed:
+            return .green
+
+        case .shotTracking:
+            return .red
         }
     }
 }
