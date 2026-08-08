@@ -445,13 +445,20 @@ class MeasurementViewModel: ObservableObject {
         
         // 原点の色変化が連続したフレーム数
         var consecutiveOriginChangedFrames = 0
-        
+
         // 上方向へ連続移動したフレーム数
         var consecutiveUpwardMoveFrames = 0
-        
+
+        // 開始位置から離れた場所でVisionが静止したフレーム数
+        var consecutiveFrozenAwayFrames = 0
+
+        // Visionが開始位置付近で固定されたまま、
+        // 原点の色だけが大きく変化したフレーム数
+        var consecutiveImpactDisappearFrames = 0
+
         // Rescueを許可する最低条件
-        let requiredOriginChangedFrames = 2
-        let requiredUpwardMoveFrames = 2
+        let requiredOriginChangedFrames = 3
+        let requiredUpwardMoveFrames = 3
         
         Task {
             let asset = AVURLAsset(url: url)
@@ -481,8 +488,24 @@ class MeasurementViewModel: ObservableObject {
                                 if let obs = currentObservation {
                                     let request = VNTrackObjectRequest(detectedObjectObservation: obs)
                                     request.trackingLevel = .accurate
-                                    try? sequenceHandler.perform([request], on: pixelBuffer, orientation: .up)
-                                    observationResult = request.results?.first as? VNDetectedObjectObservation
+                                    do {
+                                        try sequenceHandler.perform(
+                                            [request],
+                                            on: pixelBuffer,
+                                            orientation: .up
+                                        )
+
+                                        observationResult =
+                                            request.results?.first
+                                            as? VNDetectedObjectObservation
+
+                                    } catch {
+                                        print(
+                                            "❌ Vision tracking error: \(error)"
+                                        )
+
+                                        observationResult = nil
+                                    }
                                 }
                                 
                                 if initialVisionBBox == nil {
@@ -512,8 +535,72 @@ class MeasurementViewModel: ObservableObject {
                     if firstTimestamp == nil { firstTimestamp = currentSecs }
                     let relativeTime = currentSecs - (firstTimestamp ?? currentSecs)
                     
-                    let phaseNow = await MainActor.run { self.phase }
-                    guard phaseNow == .armed || phaseNow == .shotTracking else { break }
+                    if debugFrameCount % 30 == 0 {
+                        print(
+                            """
+                            🎞 FRAME CHECK
+                            frame: \(debugFrameCount)
+                            time: \(currentSecs)
+                            readerStatus: \(reader.status.rawValue)
+                            hasCurrentObservation: \(currentObservation != nil)
+                            hasObservationResult: \(observationResult != nil)
+                            """
+                        )
+                    }
+                    
+                    let phaseNow =
+                        await MainActor.run {
+                            self.phase
+                        }
+
+                    guard phaseNow == .armed ||
+                          phaseNow == .shotTracking else {
+
+                        print(
+                            """
+                            🛑 VIDEO LOOP STOPPED BY PHASE
+                            frame: \(debugFrameCount)
+                            time: \(relativeTime)
+                            phase: \(phaseNow.rawValue)
+                            """
+                        )
+
+                        break
+                    }
+                    
+                    if debugFrameCount % 10 == 0 {
+                        if let result = observationResult {
+                            let center = CGPoint(
+                                x: result.boundingBox.midX,
+                                y: 1.0 - result.boundingBox.midY
+                            )
+
+                            print(
+                                """
+                                🔎 VISION RESULT
+                                frame: \(debugFrameCount)
+                                time: \(relativeTime)
+                                confidence: \(result.confidence)
+                                centerX: \(center.x)
+                                centerY: \(center.y)
+                                bboxWidth: \(result.boundingBox.width)
+                                bboxHeight: \(result.boundingBox.height)
+                                originColorDiff: \(originColorDiff)
+                                trackerColorDiff: \(trackerColorDiff)
+                                """
+                            )
+                        } else {
+                            print(
+                                """
+                                ⚠️ VISION RESULT NIL
+                                frame: \(debugFrameCount)
+                                time: \(relativeTime)
+                                hasCurrentObservation: \(currentObservation != nil)
+                                originColorDiff: \(originColorDiff)
+                                """
+                            )
+                        }
+                    }
                     
                     if let result = observationResult, result.confidence > 0.15 {
                         let center = CGPoint(x: result.boundingBox.midX, y: 1.0 - result.boundingBox.midY)
@@ -528,6 +615,85 @@ class MeasurementViewModel: ObservableObject {
                                 let dyFromLast = center.y - lastCenter.y
                                 let dyUpwardFromLast = lastCenter.y - center.y
                                 let dxFromStart = center.x - startPt.x
+                                
+                                let movementFromLast = hypot(
+                                    center.x - lastCenter.x,
+                                    center.y - lastCenter.y
+                                )
+
+                                let distanceFromStart = hypot(
+                                    center.x - startPt.x,
+                                    center.y - startPt.y
+                                )
+
+                                // 開始位置から離れている状態で、ほぼ動かない場合を数える
+                                if distanceFromStart > 0.025 &&
+                                    movementFromLast < 0.001 {
+
+                                    consecutiveFrozenAwayFrames += 1
+                                } else {
+                                    consecutiveFrozenAwayFrames = 0
+                                }
+
+                                let isTrackerFrozenAwayFromStart =
+                                    consecutiveFrozenAwayFrames >= 3
+                                
+                                if isTrackerFrozenAwayFromStart {
+                                    print(
+                                        """
+                                        ♻️ TRACKER RESET: frozen away from start
+                                        time: \(relativeTime)
+                                        frozenFrames: \(consecutiveFrozenAwayFrames)
+                                        distanceFromStart: \(distanceFromStart)
+                                        movementFromLast: \(movementFromLast)
+                                        centerX: \(center.x)
+                                        centerY: \(center.y)
+                                        """
+                                    )
+
+                                    shouldResetTracker = true
+                                }
+                                
+                                // 開始位置の近くで、Visionの追跡枠がほぼ停止しているか
+                                let isTrackerFrozenNearStart =
+                                    distanceFromStart <= 0.025 &&
+                                    movementFromLast < 0.001
+
+                                // 原点の色がインパクト相当まで大きく変化したか
+                                let hasStrongOriginChange =
+                                    originColorDiff >= 0.015
+
+                                if isTrackerFrozenNearStart &&
+                                    hasStrongOriginChange {
+
+                                    consecutiveImpactDisappearFrames += 1
+                                } else {
+                                    consecutiveImpactDisappearFrames = 0
+                                }
+
+                                // 2フレーム連続した場合に、
+                                // インパクトによってボールが消えた候補とする
+                                let isImpactDisappearCandidate =
+                                    consecutiveImpactDisappearFrames >= 2
+                                
+                                if hasStrongOriginChange ||
+                                    consecutiveImpactDisappearFrames > 0 {
+
+                                    print(
+                                        """
+                                        💥 IMPACT DISAPPEAR CANDIDATE
+                                        time: \(relativeTime)
+                                        distanceFromStart: \(distanceFromStart)
+                                        movementFromLast: \(movementFromLast)
+                                        originDiff: \(originColorDiff)
+                                        impactFrames: \(consecutiveImpactDisappearFrames)
+                                        frozenNearStart: \(isTrackerFrozenNearStart)
+                                        strongOriginChange: \(hasStrongOriginChange)
+                                        confirmed: \(isImpactDisappearCandidate)
+                                        confidence: \(result.confidence)
+                                        """
+                                    )
+                                }
                                 
                                 // 原点の色が変化し続けているか
                                 if originColorDiff >= 0.010 {
@@ -586,12 +752,55 @@ class MeasurementViewModel: ObservableObject {
                                             )
                                     }
                                     
+                                    print(
+                                        """
+                                        🧪 ANOMALY CANDIDATE
+                                        time: \(relativeTime)
+                                        isAnomalyMove: \(isAnomalyMove)
+                                        isColorChanged: \(isColorChanged)
+                                        hasEnoughUpwardDisplacement: \(hasEnoughUpwardDisplacement)
+                                        horizontalMovementIsReasonable: \(horizontalMovementIsReasonable)
+                                        originChangedContinuously: \(originChangedContinuously)
+                                        movedUpContinuously: \(movedUpContinuously)
+                                        hasUsableUpwardPoint: \(hasUsableUpwardPoint)
+                                        isSuspiciousStationary: \(isSuspiciousStationary)
+                                        originFrames: \(consecutiveOriginChangedFrames)
+                                        upwardFrames: \(consecutiveUpwardMoveFrames)
+                                        dyFromStart: \(dyFromStart)
+                                        dyFromStartAtLast: \(dyFromStartAtLast)
+                                        dyFromLast: \(dyFromLast)
+                                        dxFromStart: \(dxFromStart)
+                                        originDiff: \(originColorDiff)
+                                        trackerDiff: \(trackerColorDiff)
+                                        confidence: \(result.confidence)
+                                        """
+                                    )
+                                    
                                     if hasEnoughUpwardDisplacement &&
                                         horizontalMovementIsReasonable &&
                                         originChangedContinuously &&
                                         movedUpContinuously &&
                                         hasUsableUpwardPoint &&
-                                        !isSuspiciousStationary {
+                                        !isSuspiciousStationary &&
+                                        !isTrackerFrozenAwayFromStart {
+                                        
+                                        print(
+                                            """
+                                            🚨 SHOT ROUTE: imported-anomaly
+                                            time: \(relativeTime)
+                                            originFrames: \(consecutiveOriginChangedFrames)
+                                            upwardFrames: \(consecutiveUpwardMoveFrames)
+                                            dyFromStart: \(dyFromStart)
+                                            dyFromStartAtLast: \(dyFromStartAtLast)
+                                            dyFromLast: \(dyFromLast)
+                                            dxFromStart: \(dxFromStart)
+                                            originDiff: \(originColorDiff)
+                                            trackerDiff: \(trackerColorDiff)
+                                            confidence: \(result.confidence)
+                                            bboxWidth: \(result.boundingBox.width)
+                                            bboxHeight: \(result.boundingBox.height)
+                                            """
+                                        )
                                         
                                         self.phase = .shotTracking
                                         self.hintText = "ショット検知！弾道をシミュレーション中..."
@@ -625,7 +834,8 @@ class MeasurementViewModel: ObservableObject {
                                         abs(dxFromStart) > 0.15
                                         
                                         shouldResetTracker =
-                                        clearlyInvalidMovement
+                                            shouldResetTracker ||
+                                            clearlyInvalidMovement
                                     }
                                 } else {
                                     recentPoints.append(center)
@@ -643,7 +853,7 @@ class MeasurementViewModel: ObservableObject {
                                         
                                         let isFastMove =
                                         framesSinceMoved > 0 &&
-                                        framesSinceMoved <= 2
+                                        framesSinceMoved <= 3
                                         
                                         let hasEnoughUpwardDisplacement =
                                         dyFromStart >= 0.024
@@ -652,13 +862,47 @@ class MeasurementViewModel: ObservableObject {
                                         consecutiveUpwardMoveFrames >=
                                         requiredUpwardMoveFrames
                                         
+                                        print(
+                                            """
+                                            🧪 NORMAL CANDIDATE
+                                            time: \(relativeTime)
+                                            isBallMissing: \(isBallMissing)
+                                            isFastMove: \(isFastMove)
+                                            hasEnoughUpwardDisplacement: \(hasEnoughUpwardDisplacement)
+                                            hasConsecutiveUpwardMovement: \(hasConsecutiveUpwardMovement)
+                                            isCurrentlyMovingUp: \(isCurrentlyMovingUp)
+                                            isVerticalDominant: \(isVerticalDominant)
+                                            originFrames: \(consecutiveOriginChangedFrames)
+                                            upwardFrames: \(consecutiveUpwardMoveFrames)
+                                            framesSinceMoved: \(framesSinceMoved)
+                                            dyFromStart: \(dyFromStart)
+                                            dyFromLast: \(dyFromLast)
+                                            dxFromStart: \(dxFromStart)
+                                            originDiff: \(originColorDiff)
+                                            trackerDiff: \(trackerColorDiff)
+                                            """
+                                        )
+                                        
                                         if isBallMissing &&
                                             isFastMove &&
                                             hasEnoughUpwardDisplacement &&
                                             hasConsecutiveUpwardMovement &&
                                             isCurrentlyMovingUp &&
-                                            isVerticalDominant {
+                                            isVerticalDominant &&
+                                            !isTrackerFrozenAwayFromStart {
                                             
+                                            print(
+                                                """
+                                                🚨 SHOT ROUTE: imported-normal
+                                                originFrames: \(consecutiveOriginChangedFrames)
+                                                upwardFrames: \(consecutiveUpwardMoveFrames)
+                                                dyFromStart: \(dyFromStart)
+                                                dxFromStart: \(dxFromStart)
+                                                originDiff: \(originColorDiff)
+                                                trackerDiff: \(trackerColorDiff)
+                                                """
+                                            )
+
                                             self.phase = .shotTracking
                                             
                                             self.hintText = "ショット検知！弾道をシミュレーション中..."
@@ -694,7 +938,8 @@ class MeasurementViewModel: ObservableObject {
                                             abs(dxFromStart) > 0.15
                                             
                                             shouldResetTracker =
-                                            clearlyInvalidMovement
+                                                shouldResetTracker ||
+                                                clearlyInvalidMovement
                                         }
                                     }
                                 }
@@ -853,16 +1098,24 @@ class MeasurementViewModel: ObservableObject {
                         }
                         
                         if shouldResetTracker {
-                            currentObservation = VNDetectedObjectObservation(boundingBox: visionBBox)
+                            currentObservation =
+                                VNDetectedObjectObservation(
+                                    boundingBox: visionBBox
+                                )
+
                             lastCenter = initialPoint
                             recentPoints.removeAll()
-                            sequenceHandler = VNSequenceRequestHandler()
+
+                            sequenceHandler =
+                                VNSequenceRequestHandler()
+
                             previousTrackerColor = nil
                             recentOriginColorDiffs.removeAll()
-                            
+
                             consecutiveOriginChangedFrames = 0
                             consecutiveUpwardMoveFrames = 0
-                            
+                            consecutiveFrozenAwayFrames = 0
+                            consecutiveImpactDisappearFrames = 0
                         } else {
                             if self.phase == .shotTracking &&
                                 shouldFinishPostImpactTracking {
@@ -985,6 +1238,20 @@ class MeasurementViewModel: ObservableObject {
                                     
                                     isSavedByRescue = true
                                     
+                                    print(
+                                        """
+                                        🚨 SHOT ROUTE: imported-rescue
+                                        time: \(relativeTime)
+                                        originFrames: \(consecutiveOriginChangedFrames)
+                                        upwardFrames: \(consecutiveUpwardMoveFrames)
+                                        dyFromStart: \(dyFromStart)
+                                        originDiff: \(originColorDiff)
+                                        recentPointCount: \(recentPoints.count)
+                                        lastCenterX: \(lastCenter.x)
+                                        lastCenterY: \(lastCenter.y)
+                                        """
+                                    )
+
                                     self.phase = .shotTracking
                                     self.hintText =
                                     "ショット検知！弾道をシミュレーション中..."
@@ -1064,20 +1331,22 @@ class MeasurementViewModel: ObservableObject {
                             
                             if phaseNow2 == .armed {
                                 currentObservation =
-                                VNDetectedObjectObservation(
-                                    boundingBox: visionBBox
-                                )
-                                
+                                    VNDetectedObjectObservation(
+                                        boundingBox: visionBBox
+                                    )
+
                                 lastCenter = initialPoint
                                 recentPoints.removeAll()
                                 sequenceHandler =
-                                VNSequenceRequestHandler()
-                                
+                                    VNSequenceRequestHandler()
+
                                 previousTrackerColor = nil
                                 recentOriginColorDiffs.removeAll()
-                                
+
                                 consecutiveOriginChangedFrames = 0
                                 consecutiveUpwardMoveFrames = 0
+                                consecutiveFrozenAwayFrames = 0
+                                consecutiveImpactDisappearFrames = 0
                             } else if phaseNow2 == .shotTracking {
                                 invalidTrackingFrames += 1
                                 
@@ -1116,6 +1385,17 @@ class MeasurementViewModel: ObservableObject {
                     )
                 }
                 
+                print(
+                    """
+                    🏁 VIDEO LOOP ENDED
+                    readerStatus: \(reader.status.rawValue)
+                    readerError: \(String(describing: reader.error))
+                    processedFrames: \(debugFrameCount)
+                    currentObservationExists: \(currentObservation != nil)
+                    shouldFinishPostImpactTracking: \(shouldFinishPostImpactTracking)
+                    """
+                )
+                
                 await MainActor.run {
                     if self.phase == .armed {
                         self.hintText = "検知できませんでした。もう一度タップしてください。"
@@ -1147,36 +1427,142 @@ class MeasurementViewModel: ObservableObject {
         camera.onRecordingStateChanged = { [weak self] isRec in DispatchQueue.main.async { self?.isRecording = isRec } }
         camera.onVideoSaved = { [weak self] in DispatchQueue.main.async { self?.hintText = "動画をカメラロールに保存しました！" } }
         camera.onTrackedPoint = { [weak self] point in
-            guard let self = self else { return }
+            guard let self else {
+                return
+            }
+
             DispatchQueue.main.async {
-                guard self.phase == .shotTracking else { return }
-                var filteredPoint = point
-                if let startPt = self.lockedBallCenter {
-                    let dx = point.x - startPt.x; let filterRate = self.selectedClub == "Toy/Indoor" ? 0.2 : 0.3
-                    filteredPoint = CGPoint(x: startPt.x + dx * filterRate, y: point.y)
+                // インポート動画の追跡点はrunVideoAnalysisLoopで管理するため、
+                // CameraManagerから届くライブカメラ用の追跡点は無視する
+                guard !self.isVideoMode else {
+                    print(
+                        "⚠️ CameraManager.onTrackedPoint ignored in video mode"
+                    )
+                    return
                 }
-                if self.tracerPointsNormalized.isEmpty, let startPt = self.lockedBallCenter { self.tracerPointsNormalized.append(startPt) }
-                self.tracerPointsNormalized.append(filteredPoint)
-                self.camera.pointsToDraw = self.tracerPointsNormalized
+
+                // ライブカメラでショット追跡中の場合だけ点を追加する
+                guard self.phase == .shotTracking else {
+                    return
+                }
+
+                var filteredPoint = point
+
+                if let startPt = self.lockedBallCenter {
+                    let dx = point.x - startPt.x
+
+                    let filterRate: CGFloat =
+                        self.selectedClub == "Toy/Indoor"
+                        ? 0.2
+                        : 0.3
+
+                    filteredPoint = CGPoint(
+                        x: startPt.x + dx * filterRate,
+                        y: point.y
+                    )
+                }
+
+                // 最初の点としてボールのロック位置を追加する
+                if self.tracerPointsNormalized.isEmpty,
+                   let startPt = self.lockedBallCenter {
+
+                    self.tracerPointsNormalized.append(
+                        startPt
+                    )
+                }
+
+                self.tracerPointsNormalized.append(
+                    filteredPoint
+                )
+
+                self.camera.pointsToDraw =
+                    self.tracerPointsNormalized
             }
         }
-        camera.onShotBegan = { [weak self] in DispatchQueue.main.async { self?.phase = .shotTracking; self?.hintText = "ショット検知！弾道をシミュレーション中..." } }
+        camera.onShotBegan = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                guard !self.isVideoMode else {
+                    print(
+                        "⚠️ CameraManager.onShotBegan ignored in video mode"
+                    )
+                    return
+                }
+
+                print(
+                    "🚨 SHOT ROUTE: CameraManager.onShotBegan"
+                )
+
+                self.phase = .shotTracking
+                self.hintText =
+                    "ショット検知！弾道をシミュレーション中..."
+            }
+        }
+        
         camera.onShotEnded = { [weak self] in
-            guard let self = self else { return }
+            guard let self else {
+                return
+            }
+
             DispatchQueue.main.async {
+                guard !self.isVideoMode else {
+                    print(
+                        "⚠️ CameraManager.onShotEnded ignored in video mode"
+                    )
+                    return
+                }
+
                 self.runBallisticSimulation()
-                self.phase = .idle; self.hintText = "計測完了！動画を合成保存します..."
-                if self.isVideoMode, let rawURL = self.currentVideoURL { self.exportImportedVideo(rawURL: rawURL) } else { self.camera.stopRecordingWithMetrics(carry: self.metrics.carryYards, speed: self.metrics.ballSpeedMS, launch: self.metrics.launchDeg, apex: self.metrics.apexFeet) }
+                self.phase = .idle
+                self.hintText =
+                    "計測完了！動画を合成保存します..."
+
+                self.camera.stopRecordingWithMetrics(
+                    carry: self.metrics.carryYards,
+                    speed: self.metrics.ballSpeedMS,
+                    launch: self.metrics.launchDeg,
+                    apex: self.metrics.apexFeet
+                )
             }
         }
+        
         camera.onTrackingLost = { [weak self] in
-            guard let self = self else { return }
+            guard let self else {
+                return
+            }
+
             DispatchQueue.main.async {
+                // インポート動画の追跡はrunVideoAnalysisLoopで管理するため、
+                // CameraManagerからの追跡喪失通知は無視する
+                guard !self.isVideoMode else {
+                    print(
+                        "⚠️ CameraManager.onTrackingLost ignored in video mode"
+                    )
+                    return
+                }
+
+                // ここから下はライブカメラ専用
                 if self.phase == .shotTracking {
-                    self.runBallisticSimulation(); self.phase = .idle; self.hintText = "計測完了（途切れ）：先を予測保存します"
-                    if self.isVideoMode, let rawURL = self.currentVideoURL { self.exportImportedVideo(rawURL: rawURL) } else { self.camera.stopRecordingWithMetrics(carry: self.metrics.carryYards, speed: self.metrics.ballSpeedMS, launch: self.metrics.launchDeg, apex: self.metrics.apexFeet) }
+                    self.runBallisticSimulation()
+                    self.phase = .idle
+                    self.hintText =
+                        "計測完了（途切れ）：先を予測保存します"
+
+                    self.camera.stopRecordingWithMetrics(
+                        carry: self.metrics.carryYards,
+                        speed: self.metrics.ballSpeedMS,
+                        launch: self.metrics.launchDeg,
+                        apex: self.metrics.apexFeet
+                    )
+
                 } else if self.phase == .searching {
-                    self.phase = .idle; self.hintText = "ボールを見失いました"; self.debugBoundingBoxNormalized = nil
+                    self.phase = .idle
+                    self.hintText =
+                        "ボールを見失いました"
+                    self.debugBoundingBoxNormalized = nil
                 }
             }
         }
